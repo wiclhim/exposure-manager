@@ -1,0 +1,8 @@
+{
+  "name": "betree-exposure-manager-rebuild",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Portfolio beta exposure and rebalancing dashboard with Taiwan real-time quote adapter",
+  "scripts": { "start": "vercel dev" },
+  "engines": { "node": ">=20" }
+}

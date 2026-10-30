@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#101827" />
+  <title>Betree 曝險管理｜再平衡替代版</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">B</div><div><div class="brand-name">Betree</div><div class="brand-sub">EXPOSURE MANAGER</div></div></div>
+      <div class="side-caption">投資組合</div>
+      <nav class="main-nav" aria-label="主要功能">
+        <button class="nav-item active" data-page="overview"><span class="nav-icon">◫</span>總覽</button>
+        <button class="nav-item" data-page="holdings"><span class="nav-icon">▤</span>持股管理</button>
+        <button class="nav-item" data-page="rebalance"><span class="nav-icon">⇄</span>再平衡</button>
+        <button class="nav-item" data-page="history"><span class="nav-icon">◷</span>歷史紀錄</button>
+      </nav>
+      <div class="side-caption side-caption-lower">系統</div>
+      <nav class="main-nav"><button class="nav-item" data-page="settings"><span class="nav-icon">⚙</span>設定</button></nav>
+      <div class="sidebar-bottom">
+        <div class="connection-card"><div class="connection-head"><span class="status-dot" id="sideStatusDot"></span><span id="sideStatusText">檢查行情連線</span></div><div class="connection-sub" id="sideStatusSub">載入行情服務狀態中</div></div>
+        <div class="sidebar-foot">個人資產風險儀表板<br><span>資料僅儲存在此瀏覽器</span></div>
+      </div>
+    </aside>
+
+    <main class="main-area">
+      <header class="topbar">
+        <div><div class="eyebrow" id="pageEyebrow">PORTFOLIO OVERVIEW</div><h1 id="pageTitle">總覽</h1></div>
+        <div class="topbar-actions"><div class="market-status"><span class="status-dot" id="marketDot"></span><span id="marketStatusText">行情來源尚未設定</span></div><button class="icon-button" id="refreshAllBtn" title="更新行情">⟳</button><button class="primary-button" id="quickAddBtn">＋ 新增持股</button></div>
+      </header>
+
+      <section class="page active" id="page-overview">
+        <div class="overview-grid">
+          <article class="panel beta-panel">
+            <div class="panel-top"><div><div class="section-label">OVERALL EXPOSURE</div><h2>目前 Beta</h2></div><button class="info-button" data-tip="投資組合 Beta = 各持倉市值 × 個別 Beta 的加總 ÷ 總資產。現金 Beta 預設為 0。Beta 是風險曝險估計，不代表報酬保證。">i</button></div>
+            <div class="beta-main"><div class="beta-number" id="currentBeta">0.00</div><div class="beta-target-chip">目標 <strong id="overviewTargetBeta">1.00</strong><span id="betaGapBadge">差距 0.00</span></div></div>
+            <div class="beta-meter"><div class="meter-zone"></div><div class="meter-track"><div class="meter-fill" id="betaMeterFill"></div><div class="target-marker" id="betaTargetMarker"></div><div class="current-marker" id="betaCurrentMarker"></div></div><div class="meter-scale"><span>0</span><span>0.5</span><span>1.0</span><span>1.5</span><span>2.0</span></div></div>
+            <div class="beta-foot"><span id="betaStatusText">尚未建立持股資料</span><span id="betaToleranceText">目標容許 ±10%</span></div>
+          </article>
+          <article class="panel total-panel">
+            <div class="panel-top"><div><div class="section-label">TOTAL PORTFOLIO VALUE</div><h2>資產總值</h2></div><span class="subtle-pill" id="holdingCount">0 個標的</span></div>
+            <div class="total-value" id="totalAssets">NT$0</div>
+            <div class="total-breakdown"><div><span class="break-dot lever"></span><span>槓桿部位</span><strong id="leverValue">NT$0</strong></div><div><span class="break-dot core"></span><span>原形部位</span><strong id="coreValue">NT$0</strong></div><div><span class="break-dot cash"></span><span>現金＋類現金</span><strong id="cashValue">NT$0</strong></div></div>
+          </article>
+          <article class="panel allocation-panel">
+            <div class="panel-top"><div><div class="section-label">ASSET ALLOCATION</div><h2>資產配置比例</h2></div><button class="info-button" data-tip="此圖依目前市值分類。目標比例可在「設定」調整，系統會在再平衡頁產生參考交易清單。">i</button></div>
+            <div class="allocation-content"><div class="donut-wrap"><div class="donut" id="allocationDonut"><div class="donut-hole"><strong id="allocationCenter">0%</strong><span>投資部位</span></div></div></div><div class="allocation-legend"><div><span class="legend-swatch lever"></span><div><strong>槓桿</strong><small id="leverPct">0% · 目標 20%</small></div></div><div><span class="legend-swatch core"></span><div><strong>原形</strong><small id="corePct">0% · 目標 60%</small></div></div><div><span class="legend-swatch cash"></span><div><strong>現金＋類現金</strong><small id="cashPct">0% · 目標 20%</small></div></div></div></div>
+          </article>
+          <article class="panel market-panel">
+            <div class="panel-top"><div><div class="section-label">MARKET LEVEL</div><h2>市場水位</h2></div><div class="market-actions"><span class="subtle-pill">52 週收盤高點</span><button class="info-button" data-tip="以 0050 最近 364 日歷史日 K 的最高收盤價作比較。這是市場水位參考，不是個股估值或買賣訊號。">i</button></div></div>
+            <div class="market-stat-row"><div><div class="market-stat-label">0050 距歷史高點</div><div class="market-distance" id="marketDistance">—</div><div class="market-state" id="marketZone">等待行情資料</div></div><div class="market-price-box"><span>目前價格</span><strong id="marketPrice">—</strong><small id="marketQuoteTime">尚無報價</small></div></div>
+            <div class="market-bar"><div class="market-bar-fill" id="marketBarFill"></div></div>
+            <div class="market-high-row"><span>52 週最高收盤 <strong id="marketHigh">—</strong></span><span id="marketHighDate">—</span></div>
+            <div class="market-foot"><span id="marketSourceText">資料來源：尚未連線</span><button class="text-button" id="marketRefreshBtn">更新市場水位 ↗</button></div>
+          </article>
+        </div>
+        <article class="panel table-panel overview-table-panel"><div class="panel-top"><div><div class="section-label">CURRENT POSITIONS</div><h2>持倉概況</h2></div><button class="text-button" data-goto="holdings">查看全部持倉 ↗</button></div><div class="table-wrap"><table><thead><tr><th>標的</th><th>分類</th><th class="right">目前價格</th><th class="right">持有市值</th><th class="right">Beta</th><th class="right">投組權重</th></tr></thead><tbody id="overviewHoldingsBody"><tr><td colspan="6" class="empty-cell">尚未新增持股，請先輸入你的持倉資料。</td></tr></tbody></table></div></article>
+      </section>
+
+      <section class="page" id="page-holdings">
+        <div class="page-intro"><div><h2>持股管理</h2><p>新增、編輯持倉與個別 Beta。行情更新後，市值及整體曝險會自動重算。</p></div><div class="intro-actions"><button class="secondary-button" id="swapOpenBtn">⇄ 標的互換</button><button class="primary-button" id="addHoldingBtn">＋ 新增持股</button></div></div>
+        <div class="mini-stats" id="holdingMiniStats"></div>
+        <article class="panel table-panel"><div class="panel-top"><div><h2>所有持倉</h2><span class="helper-text">價格顯示來源與最後更新時間可在編輯視窗確認</span></div><div class="table-tools"><input class="search-input" id="holdingSearch" placeholder="搜尋代號／名稱" /><button class="secondary-button small" id="exportCsvBtn">匯出 CSV</button></div></div><div class="table-wrap"><table><thead><tr><th>標的</th><th>配置類別</th><th class="right">持有數量</th><th class="right">成本均價</th><th class="right">目前價格</th><th class="right">市值</th><th class="right">Beta</th><th>報價狀態</th><th></th></tr></thead><tbody id="holdingsBody"><tr><td colspan="9" class="empty-cell">尚未建立持倉。</td></tr></tbody></table></div></article>
+        <div class="notice-line"><span>ⓘ</span>本工具只提供部位計算與交易參考，不會連線券商下單；請自行確認交易單位、手續費、稅費與成交價格。</div>
+      </section>
+
+      <section class="page" id="page-rebalance">
+        <div class="page-intro"><div><h2>再平衡計畫</h2><p>依目標配置比例計算各部位應調整的金額與股數。先調整目標，再依清單自行確認交易。</p></div><div class="intro-actions"><button class="secondary-button" id="rebalanceSwapBtn">⇄ 標的互換</button><button class="secondary-button" id="printPlanBtn">列印計畫</button></div></div>
+        <div class="rebalance-summary-grid" id="rebalanceSummary"></div>
+        <article class="panel rebalance-panel"><div class="panel-top"><div><div class="section-label">TARGET VS CURRENT</div><h2>目標配置與目前配置</h2></div><button class="text-button" data-goto="settings">調整目標比例 ↗</button></div><div id="allocationCompare" class="allocation-compare"></div></article>
+        <article class="panel table-panel"><div class="panel-top"><div><div class="section-label">TRADE SUGGESTIONS</div><h2>建議調整清單</h2><span class="helper-text">目標類別金額會依同類持倉目前市值比例分配；未持有的目標類別會顯示「待指定標的」。</span></div><span class="subtle-pill" id="planStatusPill">計算中</span></div><div class="table-wrap"><table><thead><tr><th>標的／分類</th><th class="right">目前市值</th><th class="right">目標市值</th><th class="right">調整金額</th><th class="right">參考股數</th><th>建議動作</th></tr></thead><tbody id="rebalanceBody"><tr><td colspan="6" class="empty-cell">新增持倉與資產後，即可產生再平衡建議。</td></tr></tbody></table></div><div class="rebalance-foot" id="rebalanceFoot"></div></article>
+        <div class="notice-line"><span>ⓘ</span>目標配置是依總資產市值計算的模型建議；股數為估算值，未計入交易成本、滑價、整股／零股限制及稅費。</div>
+      </section>
+
+      <section class="page" id="page-history">
+        <div class="page-intro"><div><h2>歷史紀錄</h2><p>手動保存每日資產快照，追蹤資產總值與整體 Beta 的變化。</p></div><div class="intro-actions"><button class="secondary-button" id="historyExportBtn">匯出紀錄 CSV</button><button class="primary-button" id="saveSnapshotBtn">＋ 儲存今日紀錄</button></div></div>
+        <div class="history-summary" id="historySummary"></div>
+        <article class="panel table-panel"><div class="panel-top"><div><h2>每日快照</h2><span class="helper-text">快照儲存在目前瀏覽器；清除瀏覽器資料前請先匯出。</span></div><button class="text-button danger-text" id="clearHistoryBtn">清除歷史</button></div><div class="table-wrap"><table><thead><tr><th>紀錄日期</th><th class="right">資產總值</th><th class="right">整體 Beta</th><th class="right">槓桿比例</th><th class="right">原形比例</th><th class="right">現金比例</th><th></th></tr></thead><tbody id="historyBody"><tr><td colspan="7" class="empty-cell">尚無歷史快照。每日收盤後可按「儲存今日紀錄」。</td></tr></tbody></table></div></article>
+      </section>
+
+      <section class="page" id="page-settings">
+        <div class="page-intro"><div><h2>系統設定</h2><p>管理目標 Beta、目標配置、報價更新頻率與基準標的。</p></div></div>
+        <div class="settings-grid">
+          <article class="panel settings-card"><div class="section-label">RISK TARGET</div><h2>風險目標</h2><div class="form-grid"><label>目標 Beta<input id="settingTargetBeta" type="number" min="0" max="5" step="0.05" /></label><label>容許偏離幅度 (%)<input id="settingTolerance" type="number" min="0" max="50" step="1" /></label></div><div class="field-note">例如目標 Beta 1.00、容許 ±10%，代表可接受區間為 0.90～1.10。</div></article>
+          <article class="panel settings-card"><div class="section-label">TARGET ALLOCATION</div><h2>目標資產配置</h2><div class="allocation-inputs"><label><span><i class="legend-swatch lever"></i>槓桿比例</span><div class="input-suffix"><input id="targetLever" type="number" min="0" max="100" step="1" /><b>%</b></div></label><label><span><i class="legend-swatch core"></i>原形比例</span><div class="input-suffix"><input id="targetCore" type="number" min="0" max="100" step="1" /><b>%</b></div></label><label><span><i class="legend-swatch cash"></i>現金＋類現金</span><div class="input-suffix"><input id="targetCash" type="number" min="0" max="100" step="1" /><b>%</b></div></label></div><div class="allocation-total"><span>合計</span><strong id="targetAllocationTotal">100%</strong><span class="field-note" id="allocationValidation">三項比例合計必須為 100%。</span></div></article>
+          <article class="panel settings-card"><div class="section-label">MARKET DATA</div><h2>行情資料來源</h2><div class="provider-row"><div class="provider-logo">F</div><div><strong>Fugle 台股行情 API</strong><p>盤中報價、歷史日 K 與 Beta 估算</p></div><span class="provider-state" id="providerState">未設定</span></div><div class="field-note">REST API Key 放在 Vercel 環境變數；WebSocket 由瀏覽器直接連線，需在此輸入 Key，會只存在目前瀏覽器 Local Storage，不會匯出到備份檔。瀏覽器端金鑰可被本機使用者檢視，請只在自己的私人裝置使用。</div><label>WebSocket API Key<input id="wsApiKey" type="password" autocomplete="off" placeholder="貼上 Fugle API Key" /></label><div class="data-actions"><button class="secondary-button small" id="saveWsKeyBtn">儲存 WebSocket Key</button><button class="text-button" id="clearWsKeyBtn">清除</button></div><div class="api-state-box" id="apiStateBox">正在檢查後端 API 狀態…</div><div class="api-state-box" id="restUsageBox">REST 用量：讀取中…</div><div class="field-note" id="wsStateText">WebSocket 尚未連線。</div><button class="secondary-button small" id="checkApiBtn">重新檢查 API</button></article>
+          <article class="panel settings-card"><div class="section-label">REFRESH & BENCHMARK</div><h2>更新與基準設定</h2><div class="form-grid"><label>自動更新頻率<select id="refreshSeconds"><option value="60">60 秒（免費方案建議）</option><option value="30">30 秒</option><option value="15">15 秒</option></select></label><label>市場水位標的<input id="benchmarkSymbol" value="0050" maxlength="12" /></label></div><div class="field-note">混合模式：最多 5 檔以 WebSocket trades 推播，其餘標的每 60 秒以 REST 輪詢。所有本網站 REST 報價、歷史及 Beta 請求都由 Upstash Redis 全域滑動視窗計數器控管，硬上限 40 次／60 秒；達上限或計數器失效時會停止向 Fugle 發送，不會繼續消耗額度。</div></article>
+          <article class="panel settings-card wide-card"><div class="section-label">DATA & PRIVACY</div><h2>資料管理</h2><p class="settings-description">持倉、現金、目標比例及歷史快照儲存在本機瀏覽器 Local Storage。換瀏覽器或清除網站資料後不會自動同步。</p><div class="data-actions"><button class="secondary-button" id="backupBtn">下載資料備份 JSON</button><label class="secondary-button file-label">匯入備份 JSON<input id="restoreInput" type="file" accept="application/json" hidden /></label><button class="text-button danger-text" id="resetAllBtn">清空所有資料</button></div></article>
+        </div>
+        <div class="settings-save-row"><span id="settingsSaveStatus">設定會自動儲存</span><button class="primary-button" id="saveSettingsBtn">儲存設定</button></div>
+      </section>
+      <footer class="app-footer"><span>BETREE PERSONAL EXPOSURE MANAGER</span><span id="footerUpdated">尚未更新行情</span></footer>
+    </main>
+  </div>
+
+  <div class="mobile-nav" id="mobileNav"><button class="active" data-page="overview">◫<span>總覽</span></button><button data-page="holdings">▤<span>持股</span></button><button data-page="rebalance">⇄<span>再平衡</span></button><button data-page="history">◷<span>歷史</span></button><button data-page="settings">⚙<span>設定</span></button></div>
+
+  <div class="modal-backdrop" id="holdingModal" aria-hidden="true"><div class="modal"><div class="modal-head"><div><div class="section-label">POSITION EDITOR</div><h2 id="holdingModalTitle">新增持股</h2></div><button class="modal-close" data-close="holdingModal">×</button></div><form id="holdingForm"><input type="hidden" id="editHoldingId" /><div class="form-grid"><label>股票／ETF 代號<input id="assetSymbol" required maxlength="12" placeholder="例如 0050" /></label><label>標的名稱<input id="assetName" placeholder="例如 元大台灣50" /></label><label>配置類別<select id="assetCategory"><option value="lever">槓桿</option><option value="core" selected>原形</option><option value="cash">現金＋類現金</option></select></label><label>個別 Beta<input id="assetBeta" type="number" min="-5" max="10" step="0.05" value="1" required /></label><label>持有數量<input id="assetQuantity" type="number" min="0" step="0.0001" value="0" required /></label><label>成本均價<input id="assetCost" type="number" min="0" step="0.01" value="0" /></label><label>目前價格（手動備援）<input id="assetPrice" type="number" min="0" step="0.01" value="0" /></label><label>每股 Beta 估算<button type="button" class="secondary-button full-width" id="estimateBetaBtn">以 0050 為基準估算 β</button></label></div><div class="modal-note" id="assetQuoteHint">若已設定 Fugle API，儲存後會自動更新最新報價；手動價格僅作行情服務未連線時的備援值。</div><div class="modal-actions"><button type="button" class="text-button danger-text" id="deleteHoldingBtn" hidden>刪除此持倉</button><span></span><button type="button" class="secondary-button" data-close="holdingModal">取消</button><button type="submit" class="primary-button">儲存持倉</button></div></form></div></div>
+
+  <div class="modal-backdrop" id="swapModal" aria-hidden="true"><div class="modal swap-modal"><div class="modal-head"><div><div class="section-label">SECURITY SWITCH</div><h2>再平衡標的互換</h2></div><button class="modal-close" data-close="swapModal">×</button></div><form id="swapForm"><label>欲替換的原持倉<select id="swapFrom" required></select></label><div class="swap-arrow">↓ 替換為 ↓</div><div class="form-grid"><label>新標的代號<input id="swapSymbol" required maxlength="12" placeholder="例如 00631L" /></label><label>新標的名稱<input id="swapName" placeholder="例如 元大台灣50正2" /></label><label>新標的 Beta<input id="swapBeta" type="number" min="-5" max="10" step="0.05" value="2" required /></label><label>新標的目前價格<input id="swapPrice" type="number" min="0" step="0.01" value="0" required /></label></div><button type="button" class="secondary-button small" id="fetchSwapQuoteBtn">↻ 取得新標的報價</button><div class="field-note" id="swapQuoteStamp">尚未取得新標的報價</div><div class="swap-mode"><div class="field-caption">互換計算方式</div><label class="radio-card"><input type="radio" name="swapMode" value="value" checked /><span><strong>保留原持倉市值</strong><small>換入後的市值與原持倉接近</small></span></label><label class="radio-card"><input type="radio" name="swapMode" value="beta" /><span><strong>保留原 Beta 曝險金額</strong><small>讓換入後的 Beta × 市值與原持倉相同</small></span></label></div><div class="swap-preview" id="swapPreview"><span>輸入標的與價格後，這裡會顯示互換結果。</span></div><div class="modal-note">此功能只修改本工具中的持倉模型，不會實際賣出或買進。若新標的已在持倉中，系統會合併數量並以新標的目前價格估算合併成本。</div><div class="modal-actions"><span></span><button type="button" class="secondary-button" data-close="swapModal">取消</button><button type="submit" class="primary-button">確認互換標的</button></div></form></div></div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
