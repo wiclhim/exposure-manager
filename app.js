@@ -274,6 +274,8 @@
     return { p, entries, missing, buy, sell, tradeTotal, targetBeta };
   }
   function renderRebalance() {
+    renderFamiliarRebalance();
+    return;
     const plan = calculateRebalance(), p = plan.p, t = state.settings.targetBeta, tol = state.settings.tolerance;
     $('rebalanceSummary').innerHTML = `<div class="summary-card"><span>目前整體 Beta</span><strong>${betaFmt(p.beta)}</strong><small>目標 ${betaFmt(t)} · 容許 ±${tol}%</small></div><div class="summary-card"><span>預估目標配置 Beta</span><strong>${betaFmt(plan.targetBeta)}</strong><small>依各持倉 Beta 加權估計</small></div><div class="summary-card"><span>預計調整金額</span><strong>${money(plan.tradeTotal)}</strong><small>買進／賣出金額合計的一半</small></div><div class="summary-card"><span>持倉可分配資產</span><strong>${money(p.total)}</strong><small>現金與證券市值合計</small></div>`;
     const compare = $('allocationCompare');
@@ -732,6 +734,115 @@
     $('saveCashBalanceBtn').addEventListener('click',saveCash);
   }
 
+  const rebalanceUi={beta:null,mode:'normal',precision:1000,excluded:new Set(),from:'',to:'',confirmation:''};
+  function applyRebalancePlan(plan) {
+    state.rebalanceUndo={at:new Date().toISOString(),holdings:clone(state.holdings),cash:state.cash,cashUsd:state.cashUsd||0};
+    plan.rows.forEach(row=>{row.h.quantity=Math.max(0,row.before+row.delta);});state.cash=plan.cash;
+    state.rebalanceLog=state.rebalanceLog||[];state.rebalanceLog.push({at:new Date().toISOString(),mode:rebalanceUi.mode,beforeBeta:plan.p.beta,afterBeta:plan.beta,precision:rebalanceUi.precision,trades:plan.rows.filter(row=>row.delta).map(row=>({symbol:row.h.symbol,quantity:row.delta,price:row.price}))});
+    persist();
+  }
+  function undoRebalancePlan() {
+    const undo=state.rebalanceUndo;if(!undo)return;
+    state.holdings=clone(undo.holdings);state.cash=undo.cash;state.cashUsd=undo.cashUsd;delete state.rebalanceUndo;persist();
+  }
+  function rebalancePreview() {
+    const p=getPortfolio(), desired=rebalanceUi.beta??Number(state.settings.targetBeta);
+    const rows=state.holdings.filter(h=>h.symbol).map(h=>({h,price:priceOf(h),before:Number(h.quantity||0),delta:0}));
+    const warnings=[];
+    let cash=Number(state.cash||0);
+    if(rows.some(row=>row.before>0&&!(row.price>0)))warnings.push('部分持股尚無價格，請更新行情或填寫手動價格。');
+    const units=row=>(row.h.currency&&row.h.currency!=='TWD')?1:rebalanceUi.precision;
+    if(rebalanceUi.mode==='swap') {
+      const sell=rows.find(row=>row.h.id===rebalanceUi.from), buy=rows.find(row=>row.h.id===rebalanceUi.to);
+      if(!sell||!buy||sell===buy)warnings.push('請選擇不同的賣出與買入標的。');
+      else if((sell.h.currency||'TWD')!==(buy.h.currency||'TWD') || (sell.h.currency||'TWD')!=='TWD')warnings.push('目前互換支援同為新台幣計價的標的。');
+      else if(sell.price>0&&buy.price>0) {
+        const difference=Number(buy.h.beta||0)-Number(sell.h.beta||0);
+        const amount=Math.abs(difference)>1e-9?(desired-p.beta)*p.total/difference:0;
+        if(Math.abs(difference)<1e-9)warnings.push('兩檔標的 Beta 相同，互換無法改變整體 Beta。');
+        else if(amount<-.01)warnings.push('此互換方向無法接近指定 Beta，請對調賣出與買入標的。');
+        else {
+          sell.delta=-Math.min(Math.floor(sell.before/units(sell))*units(sell),Math.floor(Math.max(0,amount)/sell.price/units(sell))*units(sell));
+          const proceeds=-sell.delta*sell.price;
+          buy.delta=Math.floor((proceeds+1e-7)/buy.price/units(buy))*units(buy);
+          cash+=proceeds-buy.delta*buy.price;
+        }
+      }
+    } else {
+      const savedTarget=clone(state.settings.target), savedBeta=state.settings.targetBeta, savedMode=state.settings.allocationMode;
+      let ideal;
+      try {state.settings.targetBeta=desired;state.settings.allocationMode='beta';syncModelTargets();ideal=calculateRebalance();}
+      finally {state.settings.target=savedTarget;state.settings.targetBeta=savedBeta;state.settings.allocationMode=savedMode;}
+      rows.forEach(row=>{
+        if(rebalanceUi.excluded.has(row.h.id)||!(row.price>0))return;
+        const target=ideal.entries.find(entry=>entry.id===row.h.id)?.target??row.before*row.price;
+        row.delta=Math.trunc(((target/row.price)-row.before)/units(row))*units(row);
+        row.delta=Math.max(-Math.floor(row.before/units(row))*units(row),row.delta);
+      });
+      rows.filter(row=>row.delta<0).forEach(row=>cash-=row.delta*row.price);
+      const buys=rows.filter(row=>row.delta>0), cost=buys.reduce((sum,row)=>sum+row.delta*row.price,0);
+      const scale=cost>0?Math.min(1,Math.max(0,cash)/cost):1;
+      if(scale<1)warnings.push('可用台幣不足，買進股數已依現有台幣與賣出所得調降；美元現金不會自動換匯。');
+      buys.forEach(row=>{row.delta=Math.floor((row.delta*scale+1e-9)/units(row))*units(row);cash-=row.delta*row.price;});
+    }
+    cash=Math.max(0,cash);
+    const total=rows.reduce((sum,row)=>sum+(row.before+row.delta)*row.price,0)+cash+Number(state.cashUsd||0)*Number(state.usdTwd||0);
+    const beta=total?rows.reduce((sum,row)=>sum+(row.before+row.delta)*row.price*Number(row.h.beta||0),0)/total:0;
+    if(p.total>0&&Math.abs(beta-desired)>.005)warnings.push('目前勾選範圍或交易精度無法完全達成指定 Beta。');
+    return {p,desired,rows,cash,beta,total,warnings,operations:rows.filter(row=>Math.abs(row.delta)>1e-8).length};
+  }
+  function renderFamiliarRebalance() {
+    let root=$('familiarRebalance');
+    if(!root){
+      const page=$('page-rebalance');[...page.children].forEach(child=>child.hidden=true);
+      root=document.createElement('div');root.id='familiarRebalance';page.append(root);
+      root.addEventListener('click',event=>{
+        const button=event.target.closest('button');if(!button)return;
+        if(button.dataset.rbmode){rebalanceUi.mode=button.dataset.rbmode;renderFamiliarRebalance();}
+        if(button.dataset.rbstep){rebalanceUi.beta=Math.max(0,Math.min(5,Math.round(((rebalanceUi.beta??state.settings.targetBeta)+Number(button.dataset.rbstep))*100)/100));renderFamiliarRebalance();}
+        if(button.hasAttribute('data-rbreset')){rebalanceUi.beta=null;renderFamiliarRebalance();}
+        if(button.hasAttribute('data-rbhelp'))notify('先指定 Beta、選擇方式與精度，勾選要調整的標的，確認預覽後套用；整張為 1,000 股、整股為 1 股。套用只更新本站模擬資料。');
+        if(button.hasAttribute('data-rbapply')){rebalanceUi.confirmation='apply';renderFamiliarRebalance();return;}
+        if(button.hasAttribute('data-rbundo')){rebalanceUi.confirmation='undo';renderFamiliarRebalance();return;}
+        if(button.hasAttribute('data-rbcancel')){rebalanceUi.confirmation='';renderFamiliarRebalance();return;}
+        if(button.dataset.rbconfirm==='apply'){
+          const plan=rebalancePreview();if(!plan.operations)return;
+          rebalanceUi.confirmation='';
+          applyRebalancePlan(plan);renderAll();notify('已套用模擬再平衡，復原點已保留。');
+        }
+        if(button.dataset.rbconfirm==='undo'&&state.rebalanceUndo){
+          rebalanceUi.confirmation='';
+          undoRebalancePlan();renderAll();notify('已復原上次再平衡');
+        }
+      });
+      root.addEventListener('change',event=>{
+        rebalanceUi.confirmation='';
+        const input=event.target;
+        if(input.hasAttribute('data-rbbeta')){const value=Number(input.value);if(!Number.isFinite(value)||value<0||value>5){notify('Beta 請填 0～5');return;}rebalanceUi.beta=value;}
+        if(input.name==='rbprecision')rebalanceUi.precision=Number(input.value);
+        if(input.dataset.rbselect){input.checked?rebalanceUi.excluded.delete(input.dataset.rbselect):rebalanceUi.excluded.add(input.dataset.rbselect);}
+        if(input.hasAttribute('data-rbfrom')){rebalanceUi.from=input.value;rebalanceUi.to='';}
+        if(input.hasAttribute('data-rbto'))rebalanceUi.to=input.value;
+        renderFamiliarRebalance();
+      });
+    }
+    const plan=rebalancePreview(), target=Number(state.settings.targetBeta), tol=Number(state.settings.tolerance);
+    const status=plan.p.beta<target*(1-tol/100)?'需增加 Beta':plan.p.beta>target*(1+tol/100)?'需降低 Beta':'容忍區間內';
+    const deltaLabel=value=>Math.abs(value)<.01?'不需調整':`${value>0?'買進':'賣出'} ${money(Math.abs(value))}`;
+    const options=(filter)=>'<option value="">請選擇標的</option>'+plan.rows.filter(filter).map(row=>`<option value="${escapeHtml(row.h.id)}">${escapeHtml(row.h.symbol)} · ${betaFmt(row.h.beta)}× · ${row.h.currency||'TWD'}</option>`).join('');
+    root.innerHTML=`<article class="panel rb-controls"><div class="panel-top"><h2>再平衡參數設定</h2><button class="info-button" data-rbhelp aria-label="查看再平衡操作說明">i</button></div><p class="helper-text">共 ${plan.operations} 筆操作，金額依目前交易精度估算。</p><div class="rb-status">目前狀態 <strong>${status}</strong></div><div class="familiar-step"><label>再平衡到 Beta <small>每次 ±0.01</small></label><button data-rbstep="-0.01" aria-label="降低再平衡 Beta 0.01">−</button><input type="number" min="0" max="5" step="0.01" data-rbbeta aria-label="再平衡到 Beta" value="${plan.desired}"><button data-rbstep="0.01" aria-label="提高再平衡 Beta 0.01">＋</button></div><button class="text-button" data-rbreset>回到目標 Beta ${betaFmt(target)}</button><div class="familiar-switch"><span>再平衡方式</span><button data-rbmode="normal" aria-pressed="${rebalanceUi.mode==='normal'}">一般再平衡</button><button data-rbmode="swap" aria-pressed="${rebalanceUi.mode==='swap'}">標的互換</button></div>${rebalanceUi.mode==='swap'?`<div class="rb-swap"><h3>選擇互換標的</h3><p>同幣別一賣一買，其他持股不調整；零股差額留在現金。</p><div class="familiar-fields"><label>賣出標的<select data-rbfrom aria-label="賣出標的">${options(row=>row.before>0)}</select></label><label>買入標的<select data-rbto aria-label="買入標的">${options(row=>row.h.id!==rebalanceUi.from)}</select></label></div><p class="field-note">買入標的需先在設定的持股清單新增，股數可填 0。</p></div>`:''}<h3>Beta 變化</h3><div class="rb-beta-flow"><div><span>目前 Beta</span><strong>${betaFmt(plan.p.beta)}</strong></div><b>→</b><div><span>再平衡後 Beta</span><strong>${betaFmt(plan.beta)}</strong></div><b>→</b><div><span>目標 Beta</span><strong>${betaFmt(target)}</strong></div></div><p class="rb-tolerance">容忍區間 ${(target*(1-tol/100)).toFixed(2)} – ${(target*(1+tol/100)).toFixed(2)}</p><h3>預估資金變化</h3><div class="rb-funds">${['lever','core','cash'].map(cat=>`<div><span>${cat==='cash'?'類現金 ETF':categoryName(cat)}</span><strong>${deltaLabel(plan.rows.filter(row=>row.h.category===cat).reduce((sum,row)=>sum+row.delta*row.price,0))}</strong></div>`).join('')}<div><span>台幣現金</span><strong>${money(state.cash)} → ${money(plan.cash)}</strong></div><div><span>美元現金</span><strong>US$${number(state.cashUsd||0)} · 無變化</strong></div></div><h3>台股交易精度</h3><fieldset class="cash-reasons" aria-label="再平衡精度"><label><input type="radio" name="rbprecision" value="1000" ${rebalanceUi.precision===1000?'checked':''}>精確到張數</label><label><input type="radio" name="rbprecision" value="1" ${rebalanceUi.precision===1?'checked':''}>精確到股數</label></fieldset>${plan.warnings.map(w=>`<p class="migration-note">${escapeHtml(w)}</p>`).join('')}</article><div class="rb-lists">${['lever','core','cash'].map(cat=>{
+      const rows=plan.rows.filter(row=>row.h.category===cat);if(!rows.length)return '';
+      const before=rows.reduce((s,row)=>s+row.before*row.price,0),after=rows.reduce((s,row)=>s+(row.before+row.delta)*row.price,0);
+      return `<article class="panel rb-group"><h2>${cat==='cash'?'類現金':categoryName(cat)}再平衡清單</h2><p class="helper-text">${rows.length} 檔標的 ／ 調整後市值 ${money(after)} · 目前 ${pct(plan.p.total?before/plan.p.total*100:0)} → 調整後 ${pct(plan.total?after/plan.total*100:0)}</p>${rows.map(row=>`<div class="rb-stock"><div class="rb-stock-head">${rebalanceUi.mode==='normal'?`<input type="checkbox" data-rbselect="${escapeHtml(row.h.id)}" aria-label="${escapeHtml(row.h.symbol)} 是否納入本次再平衡" ${rebalanceUi.excluded.has(row.h.id)?'':'checked'}>`:''}<div><strong>${escapeHtml(row.h.symbol)} ${escapeHtml(row.h.name||'')}</strong><small>股價 ${money2(row.price)} · 市值 ${money(row.before*row.price)}</small></div><b class="${row.delta>0?'trade-buy':row.delta<0?'trade-sell':''}">${row.delta?`${row.delta>0?'買進':'賣出'} ${number(Math.abs(row.delta))} 股`:'不動作'}</b></div><div class="rb-share"><span>股數 ${number(row.before)} → ${number(row.before+row.delta)}</span><span>目前 ${pct(before?row.before*row.price/before*100:0)} → 再平衡後 ${pct(after?(row.before+row.delta)*row.price/after*100:0)}</span></div></div>`).join('')}</article>`;
+    }).join('')}</div><article class="panel rb-apply"><h3>確認清單後套用</h3><p>依上方精度更新本站持股與現金，套用前自動保留復原點。估算未計交易成本；可至現金頁補登。</p><button class="primary-button" data-rbapply ${!plan.operations||plan.rows.some(row=>row.before>0&&!(row.price>0))?'disabled':''}>套用再平衡結果</button>${state.rebalanceUndo?'<button class="secondary-button" data-rbundo>復原上次再平衡</button>':''}</article>`;
+    if(rebalanceUi.confirmation){
+      const box=document.createElement('div');box.className='migration-note';box.setAttribute('role','alert');
+      box.innerHTML=rebalanceUi.confirmation==='apply'?`<p>確認套用 ${plan.operations} 筆模擬調整：台幣 ${money(state.cash)} → ${money(plan.cash)}；Beta ${betaFmt(plan.p.beta)} → ${betaFmt(plan.beta)}。只更新本站資料。</p><button class="primary-button" data-rbconfirm="apply">確認套用</button><button class="secondary-button" data-rbcancel>取消</button>`:'<p>復原上次套用前的持股、台幣與美元現金，套用後另行修改的持股與現金也會還原。</p><button class="primary-button" data-rbconfirm="undo">確認復原</button><button class="secondary-button" data-rbcancel>取消</button>';
+      root.querySelector('.rb-apply').append(box);
+    }
+    if(root.querySelector('[data-rbfrom]'))root.querySelector('[data-rbfrom]').value=rebalanceUi.from;
+    if(root.querySelector('[data-rbto]'))root.querySelector('[data-rbto]').value=rebalanceUi.to;
+  }
   let settingsSection = 'cash';
   function groupWeights(category) {
     const holdings = state.holdings.filter(h=>h.category===category && h.symbol);
