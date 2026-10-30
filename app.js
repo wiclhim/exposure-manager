@@ -5,7 +5,6 @@
     holdings: [], cash: 0, history: [], quoteCache: {}, marketHistory: null,
     settings: { targetBeta: 1, tolerance: 10, target: { lever: 20, core: 60, cash: 20 }, refreshSeconds: 60, benchmark: '0050' }
   };
-  let state = loadState();
   let apiConfigured = false;
   let isRefreshing = false;
   let quoteTimer = null;
@@ -27,6 +26,8 @@
 
   const $ = id => document.getElementById(id);
   const clone = value => JSON.parse(JSON.stringify(value));
+  // loadState clones the defaults, so it must run only after clone is initialized.
+  let state = loadState();
   const money = value => `NT$${Math.round(Number(value || 0)).toLocaleString('zh-TW')}`;
   const money2 = value => `NT$${Number(value || 0).toLocaleString('zh-TW', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const number = value => Number(value || 0).toLocaleString('zh-TW', { maximumFractionDigits: 4 });
