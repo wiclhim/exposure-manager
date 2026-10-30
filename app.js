@@ -118,8 +118,9 @@
     $('currentBeta').textContent = betaFmt(p.beta);
     $('overviewTargetBeta').textContent = betaFmt(t);
     const gap = p.beta - t;
-    $('betaGapBadge').textContent = `差距 ${gap >= 0 ? '+' : ''}${gap.toFixed(2)}`;
-    $('betaToleranceText').textContent = `目標容許 ±${tol}%`;
+    const relativeGap=t>0 ? `${gap>=0?'+':''}${(gap/t*100).toFixed(2)}%` : '—';
+    $('betaGapBadge').textContent = `${gap >= 0 ? '+' : ''}${gap.toFixed(2)} (${relativeGap})`;
+    $('betaToleranceText').textContent = `± ${tol}%`;
     const low = t * (1 - tol / 100), high = t * (1 + tol / 100);
     let status = '尚未建立持股資料', gapColor = '#8290a0';
     if (p.total > 0) {
@@ -128,11 +129,24 @@
       else { status = '目前 Beta 位於目標容許範圍內'; gapColor = '#14966d'; }
     }
     $('betaGapBadge').style.color = gapColor; $('betaStatusText').textContent = status;
-    const currentX = Math.max(0, Math.min(100, p.beta / 2 * 100));
-    const targetX = Math.max(0, Math.min(100, t / 2 * 100));
+    const needsSetup=!state.holdings.some(h=>h.symbol&&Number(h.quantity)>0);
+    const outside=p.beta<low||p.beta>high;
+    $('betaOverviewAction').hidden=!needsSetup&&!outside;
+    $('betaOverviewAction').dataset.goto=needsSetup?'settings':'rebalance';
+    $('betaOverviewAction').textContent=needsSetup?'開始設定 Beta／持股 →':'前往再平衡 →';
+    $('betaInRange').hidden=needsSetup||outside;
+    const scaleMax=Math.max(2,Math.ceil(Math.max(p.beta,high)*2)/2);
+    const position=value=>Math.max(0,Math.min(100,value/scaleMax*100));
+    const currentX = position(p.beta);
+    const targetX = position(t);
     $('betaMeterFill').style.width = `${currentX}%`;
     $('betaCurrentMarker').style.left = `${currentX}%`;
     $('betaTargetMarker').style.left = `${targetX}%`;
+    $('betaTargetLabel').textContent=`目標 ${betaFmt(t)}`;
+    $('betaToleranceZone').style.left=`${position(low)}%`;
+    $('betaToleranceZone').style.width=`${position(high)-position(low)}%`;
+    $('betaMeterScale').innerHTML=Array.from({length:5},(_,i)=>`<span>${Number((scaleMax*i/4).toFixed(3))}</span>`).join('');
+    $('betaMeter').setAttribute('aria-label',`目前 Beta ${betaFmt(p.beta)}，目標 ${betaFmt(t)}，容忍區間 ${betaFmt(low)} 至 ${betaFmt(high)}`);
     $('totalAssets').textContent = money(p.total);
     $('leverValue').textContent = money(p.lever); $('coreValue').textContent = money(p.core); $('cashValue').textContent = money(p.cash);
     $('holdingCount').textContent = `${state.holdings.length} 個標的`;
@@ -141,9 +155,9 @@
     const investedPct = (p.lever + p.core) / total * 100;
     $('allocationDonut').style.background = `conic-gradient(#6781ed 0 ${leverPct}%, #3dbb98 ${leverPct}% ${leverPct + corePct}%, #c5cfdb ${leverPct + corePct}% 100%)`;
     $('allocationCenter').textContent = pct(investedPct);
-    $('leverPct').textContent = `${pct(leverPct)} · 目標 ${state.settings.target.lever}%`;
-    $('corePct').textContent = `${pct(corePct)} · 目標 ${state.settings.target.core}%`;
-    $('cashPct').textContent = `${pct(cashPct)} · 目標 ${state.settings.target.cash}%`;
+    $('leverPct').textContent = `${pct(leverPct)} · 目標 ${pct(state.settings.target.lever)}`;
+    $('corePct').textContent = `${pct(corePct)} · 目標 ${pct(state.settings.target.core)}`;
+    $('cashPct').textContent = `${pct(cashPct)} · 目標 ${pct(state.settings.target.cash)}`;
     const body = $('overviewHoldingsBody');
     if (!state.holdings.length) body.innerHTML = '<tr><td colspan="6" class="empty-cell">尚未新增持股，請先輸入你的持倉資料。</td></tr>';
     else body.innerHTML = [...state.holdings].sort((a,b) => marketValue(b)-marketValue(a)).slice(0,6).map(h => {

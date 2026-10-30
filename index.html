@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="/styles.css" />
   <link rel="stylesheet" href="/settings.css" />
   <link rel="stylesheet" href="/rebalance.css" />
+  <link rel="stylesheet" href="/beta-card.css" />
 </head>
 <body>
   <div class="app-shell">
@@ -40,10 +41,11 @@
       <section class="page active" id="page-overview">
         <div class="overview-grid">
           <article class="panel beta-panel">
-            <div class="panel-top"><div><div class="section-label">OVERALL EXPOSURE</div><h2>目前 Beta</h2></div><button class="info-button" data-tip="投資組合 Beta = 各持倉市值 × 個別 Beta 的加總 ÷ 總資產。現金 Beta 預設為 0。Beta 是風險曝險估計，不代表報酬保證。">i</button></div>
-            <div class="beta-main"><div class="beta-number" id="currentBeta">0.00</div><div class="beta-target-chip">目標 <strong id="overviewTargetBeta">1.00</strong><span id="betaGapBadge">差距 0.00</span></div></div>
-            <div class="beta-meter"><div class="meter-zone"></div><div class="meter-track"><div class="meter-fill" id="betaMeterFill"></div><div class="target-marker" id="betaTargetMarker"></div><div class="current-marker" id="betaCurrentMarker"></div></div><div class="meter-scale"><span>0</span><span>0.5</span><span>1.0</span><span>1.5</span><span>2.0</span></div></div>
-            <div class="beta-foot"><span id="betaStatusText">尚未建立持股資料</span><span id="betaToleranceText">目標容許 ±10%</span></div>
+            <div class="beta-card-heading"><h2>目前 Beta</h2><button class="info-button" aria-label="查看 Beta 說明" data-tip="投資組合 Beta = 各持倉市值 × 個別 Beta 的加總 ÷ 總資產。現金 Beta 預設為 0。Beta 是風險曝險估計，不代表報酬保證。">i</button></div>
+            <p class="beta-subtitle">整體資產曝險程度</p>
+            <div class="beta-main"><div class="beta-reading"><div class="beta-number" id="currentBeta">0.00</div><button id="betaOverviewAction" class="beta-overview-action" data-goto="settings">開始設定 Beta／持股 →</button><span id="betaInRange" hidden>容忍區間內</span></div><div class="beta-details"><div><span>目標設定</span><strong><span id="overviewTargetBeta">1.00</span> <span id="betaToleranceText">± 10%</span></strong></div><div><span>與目標差距</span><strong id="betaGapBadge">-1.00 (-100.00%)</strong></div></div></div>
+            <div class="beta-meter"><div class="meter-track" role="img" id="betaMeter" aria-label="Beta 刻度"><div class="meter-zone" id="betaToleranceZone"></div><div class="meter-fill" id="betaMeterFill"></div><div class="target-marker" id="betaTargetMarker"><span id="betaTargetLabel">目標 1.00</span></div><div class="current-marker" id="betaCurrentMarker"></div></div><div class="meter-scale" id="betaMeterScale"><span>0</span><span>0.5</span><span>1</span><span>1.5</span><span>2</span></div></div>
+            <div class="beta-foot"><span id="betaStatusText">尚未建立持股資料</span></div>
           </article>
           <article class="panel total-panel">
             <div class="panel-top"><div><div class="section-label">TOTAL PORTFOLIO VALUE</div><h2>資產總值</h2></div><span class="subtle-pill" id="holdingCount">0 個標的</span></div>
