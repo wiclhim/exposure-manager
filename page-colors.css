@@ -46,3 +46,4 @@
 :is(#holdingModal,#swapModal) :is(.modal-close,.modal-note,.swap-preview){background:#f4f5ee;color:#78816f;border-color:#e5e7dc}
 :is(#holdingModal,#swapModal) :is(input,select,.radio-card){border-color:#dfe3d7;color:#3b4836;accent-color:#7f9388}
 :is(#holdingModal,#swapModal) :is(input,select):focus{border-color:#91a397;box-shadow:0 0 0 3px #7f938815}
+.overview-holding-tools{flex-wrap:wrap;justify-content:flex-end;gap:8px}.overview-holding-tools .secondary-button{background:#f5f4f0;border-color:#e5e4de;color:#59665d}.overview-holding-tools .text-button{color:#5d7969}.overview-holding-tools .search-input{border-color:#dfdfd6;color:#35443a}.overview-holding-tools .search-input:focus{border-color:#91a397;box-shadow:0 0 0 3px #7f938815}@media(max-width:640px){.overview-holding-tools{justify-content:flex-start}.overview-holding-tools .search-input{width:100%}.overview-holding-tools .secondary-button,.overview-holding-tools .text-button{flex:1}}

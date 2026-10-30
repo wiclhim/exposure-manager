@@ -98,6 +98,7 @@
   }
   function targetRatios() { return state.settings.target || defaults.settings.target; }
   function setPage(page) {
+    if(page==='holdings'){settingsSection='holdings';page='settings';}
     if (!$(`page-${page}`)) return;
     currentPage = page;
     document.querySelectorAll('.page').forEach(node => node.classList.toggle('active', node.id === `page-${page}`));
@@ -159,8 +160,12 @@
     $('corePct').textContent = `${pct(corePct)} · 目標 ${pct(state.settings.target.core)}`;
     $('cashPct').textContent = `${pct(cashPct)} · 目標 ${pct(state.settings.target.cash)}`;
     const body = $('overviewHoldingsBody');
-    if (!state.holdings.length) body.innerHTML = '<tr><td colspan="6" class="empty-cell">尚未新增持股，請先輸入你的持倉資料。</td></tr>';
-    else body.innerHTML = [...state.holdings].sort((a,b) => marketValue(b)-marketValue(a)).slice(0,6).map(h => {
+    const search=($('overviewHoldingSearch').value||'').trim().toLowerCase();
+    const holdings=state.holdings.filter(h=>h.symbol);
+    const visible=holdings.filter(h=>`${h.symbol} ${h.name||''}`.toLowerCase().includes(search)).sort((a,b)=>marketValue(b)-marketValue(a));
+    $('overviewHoldingsCount').textContent=search?`顯示 ${visible.length} / ${holdings.length} 檔`:`共 ${holdings.length} 檔持股`;
+    if (!visible.length) body.innerHTML = `<tr><td colspan="6" class="empty-cell">${search?'找不到符合的持股。':'尚未新增持股，請至「設定 → 持股」輸入資料。'}</td></tr>`;
+    else body.innerHTML = visible.map(h => {
       const q = h.quote || state.quoteCache[h.symbol];
       return `<tr><td><div class="asset-cell"><div class="asset-avatar">${escapeHtml(String(h.symbol).slice(0,4))}</div><div class="asset-name"><strong>${escapeHtml(h.name || h.symbol)}</strong><small>${escapeHtml(h.symbol)}</small></div></div></td><td><span class="tag ${categoryClass(h.category)}">${categoryName(h.category)}</span></td><td class="right">${priceOf(h) ? money2(priceOf(h)) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${betaFmt(h.beta)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td></tr>`;
     }).join('');
@@ -698,7 +703,11 @@
     document.querySelectorAll('[data-goto]').forEach(el=>el.addEventListener('click',()=>setPage(el.dataset.goto)));
     document.querySelectorAll('[data-close]').forEach(el=>el.addEventListener('click',()=>closeModal(el.dataset.close)));
     document.querySelectorAll('.modal-backdrop').forEach(el=>el.addEventListener('click',e=>{if(e.target===el)closeModal(el.id);}));
-    $('quickAddBtn').addEventListener('click',()=>{setPage('holdings');openAddHolding();});
+    const gotoHoldingSettings=()=>{settingsSection='holdings';setPage('settings');};
+    $('quickAddBtn').addEventListener('click',gotoHoldingSettings);
+    $('overviewManageHoldingsBtn').addEventListener('click',gotoHoldingSettings);
+    $('overviewHoldingSearch').addEventListener('input',renderOverview);
+    $('overviewExportCsvBtn').addEventListener('click',exportHoldings);
     $('addHoldingBtn').addEventListener('click',openAddHolding);
     $('holdingForm').addEventListener('submit',saveHolding);
     $('assetCategory').addEventListener('change',()=>{ $('assetBeta').value = $('assetCategory').value === 'lever' ? 2 : $('assetCategory').value === 'cash' ? 0 : 1; });

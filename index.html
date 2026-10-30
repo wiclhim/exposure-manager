@@ -23,7 +23,6 @@
       <div class="side-caption">投資組合</div>
       <nav class="main-nav" aria-label="主要功能">
         <button class="nav-item active" data-page="overview"><span class="nav-icon">◫</span>總覽</button>
-        <button class="nav-item" data-page="holdings"><span class="nav-icon">▤</span>持股管理</button>
         <button class="nav-item" data-page="rebalance"><span class="nav-icon">⇄</span>再平衡</button>
         <button class="nav-item" data-page="history"><span class="nav-icon">◷</span>歷史紀錄</button>
       </nav>
@@ -70,7 +69,7 @@
             <div class="market-foot"><span id="marketSourceText">資料來源：尚未連線</span><button class="text-button" id="marketRefreshBtn">更新市場水位 ↗</button></div>
           </article>
         </div>
-        <article class="panel table-panel overview-table-panel"><div class="panel-top"><div><div class="section-label">CURRENT POSITIONS</div><h2>持倉概況</h2></div><button class="text-button" data-goto="holdings">查看全部持倉 ↗</button></div><div class="table-wrap"><table><thead><tr><th>標的</th><th>分類</th><th class="right">目前價格</th><th class="right">持有市值</th><th class="right">Beta</th><th class="right">投組權重</th></tr></thead><tbody id="overviewHoldingsBody"><tr><td colspan="6" class="empty-cell">尚未新增持股，請先輸入你的持倉資料。</td></tr></tbody></table></div></article>
+        <article class="panel table-panel overview-table-panel"><div class="panel-top"><div><div class="section-label">CURRENT POSITIONS</div><h2>持倉概況</h2><span class="helper-text" id="overviewHoldingsCount"></span></div><div class="table-tools overview-holding-tools"><input class="search-input" id="overviewHoldingSearch" type="search" aria-label="搜尋持股代號或名稱" placeholder="搜尋代號／名稱" /><button class="secondary-button small" id="overviewExportCsvBtn">匯出全部 CSV</button><button class="text-button" id="overviewManageHoldingsBtn">編輯持股 ↗</button></div></div><div class="table-wrap"><table><thead><tr><th>標的</th><th>分類</th><th class="right">目前價格</th><th class="right">持有市值</th><th class="right">Beta</th><th class="right">投組權重</th></tr></thead><tbody id="overviewHoldingsBody"><tr><td colspan="6" class="empty-cell">尚未新增持股，請先輸入你的持倉資料。</td></tr></tbody></table></div></article>
       </section>
 
       <section class="page" id="page-holdings">
@@ -109,7 +108,7 @@
     </main>
   </div>
 
-  <div class="mobile-nav" id="mobileNav"><button class="active" data-page="overview">◫<span>總覽</span></button><button data-page="holdings">▤<span>持股</span></button><button data-page="rebalance">⇄<span>再平衡</span></button><button data-page="history">◷<span>歷史</span></button><button data-page="settings">⚙<span>設定</span></button></div>
+  <div class="mobile-nav" id="mobileNav"><button class="active" data-page="overview">◫<span>總覽</span></button><button data-page="rebalance">⇄<span>再平衡</span></button><button data-page="history">◷<span>歷史</span></button><button data-page="settings">⚙<span>設定</span></button></div>
 
   <div class="modal-backdrop" id="holdingModal" aria-hidden="true"><div class="modal"><div class="modal-head"><div><div class="section-label">POSITION EDITOR</div><h2 id="holdingModalTitle">新增持股</h2></div><button class="modal-close" data-close="holdingModal">×</button></div><form id="holdingForm"><input type="hidden" id="editHoldingId" /><div class="form-grid"><label>股票／ETF 代號<input id="assetSymbol" required maxlength="12" placeholder="例如 0050" /></label><label>標的名稱<input id="assetName" placeholder="例如 元大台灣50" /></label><label>配置類別<select id="assetCategory"><option value="lever">槓桿</option><option value="core" selected>原形</option><option value="cash">現金＋類現金</option></select></label><label>個別 Beta<input id="assetBeta" type="number" min="-5" max="10" step="0.05" value="1" required /></label><label>持有數量<input id="assetQuantity" type="number" min="0" step="0.0001" value="0" required /></label><label>成本均價<input id="assetCost" type="number" min="0" step="0.01" value="0" /></label><label>目前價格（手動備援）<input id="assetPrice" type="number" min="0" step="0.01" value="0" /></label><label>每股 Beta 估算<button type="button" class="secondary-button full-width" id="estimateBetaBtn">以 0050 為基準估算 β</button></label></div><div class="modal-note" id="assetQuoteHint">若已設定 Fugle API，儲存後會自動更新最新報價；手動價格僅作行情服務未連線時的備援值。</div><div class="modal-actions"><button type="button" class="text-button danger-text" id="deleteHoldingBtn" hidden>刪除此持倉</button><span></span><button type="button" class="secondary-button" data-close="holdingModal">取消</button><button type="submit" class="primary-button">儲存持倉</button></div></form></div></div>
 
