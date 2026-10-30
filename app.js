@@ -849,6 +849,7 @@
       const before=rows.reduce((s,row)=>s+row.before*row.price,0),after=rows.reduce((s,row)=>s+(row.before+row.delta)*row.price,0);
       return `<article class="panel rb-group"><h2>${cat==='cash'?'類現金':categoryName(cat)}再平衡清單</h2><p class="helper-text">${rows.length} 檔標的 ／ 調整後市值 ${money(after)} · 目前 ${pct(plan.p.total?before/plan.p.total*100:0)} → 調整後 ${pct(plan.total?after/plan.total*100:0)}</p>${rows.map(row=>`<div class="rb-stock"><div class="rb-stock-head">${rebalanceUi.mode==='normal'?`<input type="checkbox" data-rbselect="${escapeHtml(row.h.id)}" aria-label="${escapeHtml(row.h.symbol)} 是否納入本次再平衡" ${rebalanceUi.excluded.has(row.h.id)?'':'checked'}>`:''}<div><strong>${escapeHtml(row.h.symbol)} ${escapeHtml(row.h.name||'')}</strong><small>股價 ${money2(row.price)} · 市值 ${money(row.before*row.price)}</small></div><b class="${row.delta>0?'trade-buy':row.delta<0?'trade-sell':''}">${row.delta?`${row.delta>0?'買進':'賣出'} ${number(Math.abs(row.delta))} 股`:'不動作'}</b></div><div class="rb-share"><span>股數 ${number(row.before)} → ${number(row.before+row.delta)}</span><span>目前 ${pct(before?row.before*row.price/before*100:0)} → 再平衡後 ${pct(after?(row.before+row.delta)*row.price/after*100:0)}</span></div></div>`).join('')}</article>`;
     }).join('')}</div><article class="panel rb-apply"><h3>確認清單後套用</h3><p>依上方精度更新本站持股與現金，套用前自動保留復原點。估算未計交易成本；可至現金頁補登。</p><button class="primary-button" data-rbapply ${!plan.operations||plan.rows.some(row=>row.before>0&&!(row.price>0))?'disabled':''}>套用再平衡結果</button>${state.rebalanceUndo?'<button class="secondary-button" data-rbundo>復原上次再平衡</button>':''}</article>`;
+    decorateRebalanceDisplay(root,plan);
     if(rebalanceUi.confirmation){
       const box=document.createElement('div');box.className='migration-note';box.setAttribute('role','alert');
       box.innerHTML=rebalanceUi.confirmation==='apply'?`<p>確認套用 ${plan.operations} 筆模擬調整：台幣 ${money(state.cash)} → ${money(plan.cash)}；Beta ${betaFmt(plan.p.beta)} → ${betaFmt(plan.beta)}。只更新本站資料。</p><button class="primary-button" data-rbconfirm="apply">確認套用</button><button class="secondary-button" data-rbcancel>取消</button>`:'<p>復原上次套用前的持股、台幣與美元現金，套用後另行修改的持股與現金也會還原。</p><button class="primary-button" data-rbconfirm="undo">確認復原</button><button class="secondary-button" data-rbcancel>取消</button>';
@@ -856,6 +857,57 @@
     }
     if(root.querySelector('[data-rbfrom]'))root.querySelector('[data-rbfrom]').value=rebalanceUi.from;
     if(root.querySelector('[data-rbto]'))root.querySelector('[data-rbto]').value=rebalanceUi.to;
+  }
+  function decorateRebalanceDisplay(root,plan) {
+    const controls=root.querySelector('.rb-controls');
+    const heading=controls.querySelector('.panel-top');
+    heading.classList.add('rb-reference-heading');
+    const info=heading.querySelector('button');
+    heading.querySelector('h2').append(info);
+    heading.append(controls.querySelector('.rb-status'));
+    const paramBox=document.createElement('div');paramBox.className='rb-reference-parameters';
+    const step=controls.querySelector('.familiar-step'), reset=controls.querySelector('[data-rbreset]');
+    step.append(reset);paramBox.append(step,controls.querySelector('.familiar-switch'));
+    const swap=controls.querySelector('.rb-swap');if(swap)paramBox.append(swap);
+    controls.querySelector(':scope > .helper-text').after(paramBox);
+    const flow=controls.querySelector('.rb-beta-flow'), tolerance=controls.querySelector('.rb-tolerance'),flowTitle=flow.previousElementSibling;
+    const flowBox=document.createElement('section');flowBox.className='rb-reference-section';
+    flowTitle.before(flowBox);flowBox.append(flowTitle);
+    flowBox.append(flow);flow.querySelector('div:last-child').append(tolerance);
+    flow.querySelectorAll(':scope > div').forEach((cell,index)=>{if(index){const arrow=document.createElement('span');arrow.className='rb-flow-arrow';arrow.textContent='→';cell.append(arrow);}});
+    const funds=controls.querySelector('.rb-funds'), fundTitle=funds.previousElementSibling;
+    const fundBox=document.createElement('section');fundBox.className='rb-reference-section';fundTitle.before(fundBox);fundBox.append(fundTitle,funds);
+    const precision=controls.querySelector('[aria-label="再平衡精度"]'), precisionTitle=precision.previousElementSibling;
+    const precisionBox=document.createElement('section');precisionBox.className='rb-reference-precision';precisionTitle.before(precisionBox);precisionBox.append(precisionTitle,precision);
+    const groups=[...root.querySelectorAll('.rb-group')];
+    groups.forEach(group=>{
+      const title=group.querySelector('h2'), label=title.textContent;
+      const category=label.startsWith('槓桿')?'lever':label.startsWith('原形')?'core':'cash';
+      group.classList.add(`rb-category-${category}`);
+      const rows=plan.rows.filter(row=>row.h.category===category);
+      const before=rows.reduce((sum,row)=>sum+row.before*row.price,0),after=rows.reduce((sum,row)=>sum+(row.before+row.delta)*row.price,0);
+      const subtitle=group.querySelector(':scope > .helper-text');
+      subtitle.textContent=`${rows.length} 檔標的 ／ 調整後市值 ${money(after)}`;
+      const header=document.createElement('div');header.className='rb-group-heading';
+      title.before(header);const text=document.createElement('div');text.append(title,subtitle);header.append(text);
+      const ratios=document.createElement('div');ratios.className='rb-group-ratios';
+      ratios.innerHTML=`<span>目前 ${pct(plan.p.total?before/plan.p.total*100:0)}</span><strong>調整後 ${pct(plan.total?after/plan.total*100:0)}</strong>`;header.append(ratios);
+      group.querySelectorAll('.rb-stock').forEach((card,index)=>{
+        const row=rows[index], head=card.querySelector('.rb-stock-head'),meta=head.querySelector('div');
+        meta.className='rb-stock-info';
+        meta.querySelector('strong').innerHTML=`${escapeHtml(row.h.symbol)} ${category==='lever'?`<span class="rb-leverage-badge">${number(row.h.beta)}×</span>`:''}`;
+        const quote=row.h.quote||state.quoteCache[row.h.symbol];
+        meta.querySelector('small').textContent=row.h.name||row.h.symbol;
+        const detail=document.createElement('small');detail.textContent=`市值 ${money(row.before*row.price)}`;meta.append(detail);
+        const stamp=document.createElement('small');stamp.textContent=`股價 ${money2(row.price)}${quote?.date?` · 更新 ${quote.date}`:''}`;meta.append(stamp);
+        head.prepend(meta);
+        const progress=document.createElement('div');progress.className='rb-proportion';
+        const current=before?row.before*row.price/before*100:0, next=after?(row.before+row.delta)*row.price/after*100:0;
+        progress.innerHTML=`<div class="rb-proportion-track" role="img" aria-label="目前 ${pct(current)}，再平衡後 ${pct(next)}"><div style="width:${Math.max(0,Math.min(100,current))}%"></div><i style="left:${Math.max(0,Math.min(100,next))}%"></i></div><div class="rb-proportion-labels"><span>目前 ${pct(current)}</span><span>再平衡後 ${pct(next)}</span></div><small>股數 ${number(row.before)} → ${number(row.before+row.delta)}</small>`;
+        head.insertBefore(progress,head.querySelector(':scope > b'));
+        card.querySelector('.rb-share').hidden=true;
+      });
+    });
   }
   let settingsSection = 'cash';
   function groupWeights(category) {
