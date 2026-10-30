@@ -68,7 +68,7 @@
   }
   function persist() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
-    catch (e) { toast('本機儲存空間不足，請先匯出備份資料。'); }
+    catch (e) { notify('本機儲存空間不足，請先匯出備份資料。'); }
   }
   function notify(message) {
     const el = $('toast'); if (!el) return;
@@ -88,12 +88,13 @@
     const cashPositions = state.holdings.filter(h => h.category === 'cash').reduce((sum, h) => sum + marketValue(h), 0);
     const lever = state.holdings.filter(h => h.category === 'lever').reduce((sum, h) => sum + marketValue(h), 0);
     const core = state.holdings.filter(h => h.category === 'core').reduce((sum, h) => sum + marketValue(h), 0);
-    const cash = Math.max(0, Number(state.cash || 0)) + cashPositions;
-    const total = totalPositions + Math.max(0, Number(state.cash || 0));
+    const cashBalance = Math.max(0, Number(state.cash || 0)) + Math.max(0, Number(state.cashUsd || 0)) * Number(state.usdTwd || 0);
+    const cash = cashBalance + cashPositions;
+    const total = totalPositions + cashBalance;
     const betaExposure = state.holdings.reduce((sum, h) => sum + marketValue(h) * Number(h.beta || 0), 0);
     const beta = total > 0 ? betaExposure / total : 0;
     const categories = { lever, core, cash };
-    return { total, totalPositions, lever, core, cash, cashBalance: Number(state.cash || 0), cashPositions, betaExposure, beta, categories };
+    return { total, totalPositions, lever, core, cash, cashBalance, cashPositions, betaExposure, beta, categories };
   }
   function targetRatios() { return state.settings.target || defaults.settings.target; }
   function setPage(page) {
@@ -244,7 +245,10 @@
       if (targetValue > 0 && !allocatable.length && category !== 'cash') {
         missing.push({ category, value: targetValue });
       }
-      const weights = groups[category].map(h => h.isCashBalance ? p.cashBalance : marketValue(h));
+      const weightedGroup=groupWeights(category);
+      const cashEtfs=groups.cash.filter(h=>!h.isCashBalance);
+      const realCashShare=cashEtfs.length ? Math.max(0,Math.min(100,Number(state.settings.realCashPct??10)))/100 : 1;
+      const weights = groups[category].map(h => category==='cash' ? (h.isCashBalance ? realCashShare : (1-realCashShare)*(state.settings.cashMode==='custom' ? weightedGroup.find(x=>x.h.id===h.id)?.weight||0 : 1/Math.max(1,cashEtfs.length))) : weightedGroup.find(x=>x.h.id===h.id)?.weight||0);
       const weightSum = weights.reduce((a,b)=>a+b,0);
       const equalWeight = groups[category].length ? 1 / groups[category].length : 0;
       groups[category].forEach((h,i) => {
@@ -266,6 +270,7 @@
       const avgBeta = mv ? holdings.reduce((s,h)=>s+(h.isCashBalance ? 0 : marketValue(h)*Number(h.beta||0)),0)/mv : 0;
       targetBeta += Number(targets[cat]||0)/100 * avgBeta;
     }
+    targetBeta=p.total ? entries.reduce((sum,row)=>sum+row.target*Number(row.beta||0),0)/p.total : 0;
     return { p, entries, missing, buy, sell, tradeTotal, targetBeta };
   }
   function renderRebalance() {
@@ -300,6 +305,7 @@
     $('historyBody').innerHTML = list.length ? list.map(x=>`<tr><td>${escapeHtml(x.date)}</td><td class="right">${money(x.total)}</td><td class="right">${betaFmt(x.beta)}</td><td class="right">${pct(x.leverPct)}</td><td class="right">${pct(x.corePct)}</td><td class="right">${pct(x.cashPct)}</td><td><button class="table-action danger" data-delete-history="${escapeHtml(x.date)}">刪除</button></td></tr>`).join('') : '<tr><td colspan="7" class="empty-cell">尚無歷史快照。每日收盤後可按「儲存今日紀錄」。</td></tr>';
   }
   function renderSettings() {
+    renderFamiliarSettings();
     $('settingTargetBeta').value = state.settings.targetBeta;
     $('settingTolerance').value = state.settings.tolerance;
     $('targetLever').value = state.settings.target.lever;
@@ -332,7 +338,7 @@
     $('marketDot').classList.toggle('ok', serviceReady); $('marketDot').classList.toggle('bad', !serviceReady);
     $('sideStatusDot').classList.toggle('ok', serviceReady); $('sideStatusDot').classList.toggle('bad', !serviceReady);
   }
-  function renderAll() { renderOverview(); if(currentPage==='holdings')renderHoldings(); if(currentPage==='rebalance')renderRebalance(); if(currentPage==='history')renderHistory(); }
+  function renderAll() { syncModelTargets(); renderOverview(); if(currentPage==='holdings')renderHoldings(); if(currentPage==='rebalance')renderRebalance(); if(currentPage==='history')renderHistory(); if(currentPage==='settings')renderFamiliarSummary(); }
 
   async function checkApiStatus() {
     try {
@@ -638,7 +644,7 @@
     if(Object.values(target).some(x=>!Number.isFinite(x)||x<0||x>100)||total!==100){notify('目標配置三項比例合計必須剛好為 100%');return false;}
     const sec=Number($('refreshSeconds').value);
     state.settings={...state.settings,targetBeta,tolerance,target,refreshSeconds:[15,30,60].includes(sec)?sec:60,benchmark:$('benchmarkSymbol').value.trim().toUpperCase()||'0050'};
-    persist(); startQuoteTimer(); updateApiStatusUi(); renderAll(); if(apiConfigured)refreshMarketHistory(true); notify('設定已儲存'); $('settingsSaveStatus').textContent='已儲存'; return true;
+    persist(); startQuoteTimer(); updateApiStatusUi(); renderAll(); notify('設定已儲存'); $('settingsSaveStatus').textContent='已儲存'; return true;
   }
   function saveSnapshot() {
     const p=getPortfolio(), total=p.total||0;
@@ -665,8 +671,10 @@
   }
   async function restoreData(file) {
     try{const data=JSON.parse(await file.text());if(!data||!Array.isArray(data.holdings)||!data.settings)throw new Error('備份檔格式不正確');
-      if(!confirm('匯入資料會覆蓋目前持倉、設定與歷史紀錄。確定繼續？'))return;
-      state={...clone(defaults),...data,settings:{...clone(defaults.settings),...data.settings,target:{...clone(defaults.settings.target),...(data.settings.target||{})}}};persist();renderAll();renderSettings();notify('資料備份已匯入');
+      if(!confirm('匯入資料會覆蓋目前持倉與設定；歷史依日期合併，同一天以備份為準。確定繼續？'))return;
+      const mergedHistory=new Map(state.history.map(row=>[row.date,row]));
+      (Array.isArray(data.history)?data.history:[]).forEach(row=>mergedHistory.set(row.date,row));
+      state={...clone(defaults),...data,history:[...mergedHistory.values()],settings:{...clone(defaults.settings),...data.settings,target:{...clone(defaults.settings.target),...(data.settings.target||{})}}};persist();renderAll();renderSettings();notify('資料備份已匯入');
     }catch(e){notify(`匯入失敗：${e.message}`);}
   }
   function bindEvents() {
@@ -724,8 +732,142 @@
     $('saveCashBalanceBtn').addEventListener('click',saveCash);
   }
 
+  let settingsSection = 'cash';
+  function groupWeights(category) {
+    const holdings = state.holdings.filter(h=>h.category===category && h.symbol);
+    const custom = category==='cash' ? state.settings.cashMode==='custom' : state.settings.distribution?.[category] === 'custom';
+    const values = holdings.map(h=>custom ? Math.max(0,Number(h.targetWeight||0)) : marketValue(h));
+    const total = values.reduce((a,b)=>a+b,0);
+    return holdings.map((h,i)=>({h,weight:total ? values[i]/total : 1/holdings.length}));
+  }
+  function syncModelTargets() {
+    if (state.settings.allocationMode !== 'beta') return;
+    const core = groupWeights('core'), lever = groupWeights('lever');
+    const corePct = core.length ? Math.max(0,Math.min(100,Number(state.settings.coreTarget||0))) : 0;
+    const coreBeta = core.reduce((sum,x)=>sum+x.weight*Number(x.h.beta||0),0);
+    const leverBeta = lever.reduce((sum,x)=>sum+x.weight*Number(x.h.beta||0),0);
+    const required = leverBeta > 0 ? (Number(state.settings.targetBeta)-corePct/100*coreBeta)/leverBeta*100 : 0;
+    const leverPct = Math.max(0,Math.min(100-corePct,required));
+    state.settings.target = {core:corePct,lever:leverPct,cash:100-corePct-leverPct};
+  }
+  function renderFamiliarSummary() {
+    if (!$('familiarSummary')) return;
+    syncModelTargets();
+    const t=targetRatios();
+    $('settingTargetBeta').value=state.settings.targetBeta;
+    $('settingTolerance').value=state.settings.tolerance;
+    $('targetLever').value=t.lever;$('targetCore').value=t.core;$('targetCash').value=t.cash;
+    const achievable = ['lever','core'].reduce((sum,cat)=>sum+t[cat]/100*groupWeights(cat).reduce((s,x)=>s+x.weight*Number(x.h.beta||0),0),0);
+    $('familiarSummary').textContent = `即時試算配置　槓桿 ${pct(t.lever)} ／ 原形 ${pct(t.core)} ／ 現金 ${pct(t.cash)}　· 可達 Beta ${betaFmt(achievable)}`;
+    $('familiarValidation').textContent = state.settings.allocationMode==='beta' && Math.abs(achievable-state.settings.targetBeta)>.005 ? '目前標的與原形比例無法達成目標 Beta，請調整曝險倍數、原形比例或目標 Beta。' : '變更會自動儲存在目前瀏覽器。';
+  }
+  function familiarField(label,key,value,step='1',max='') {
+    return `<label>${label}<input type="number" min="0" ${max ? `max="${max}"` : ''} step="${step}" data-setting="${key}" value="${Number(value||0)}"></label>`;
+  }
+  function familiarHoldings(category) {
+    const title = category==='lever'?'槓桿':category==='core'?'原形':'類現金';
+    const rows = state.holdings.filter(h=>h.category===category);
+    const custom = category==='cash' ? state.settings.cashMode==='custom' : state.settings.distribution?.[category]==='custom';
+    return `<article class="panel familiar-group"><div class="panel-top"><h2>${title} <small>${rows.length} 筆標的</small></h2></div><div class="familiar-switch"><span>個股佔比分配方式</span><button data-distribution="${category}:auto" aria-pressed="${!custom}">自動分配</button><button data-distribution="${category}:custom" aria-pressed="${custom}">自訂個股佔比</button></div>${rows.map((h,i)=>`<div class="familiar-holding" data-holding="${escapeHtml(h.id)}"><div class="panel-top"><strong>${title} ${i+1} ${escapeHtml(h.name!==h.symbol?h.name||'':'')}</strong><button class="text-button danger-text" data-remove-familiar="${escapeHtml(h.id)}">移除</button></div><div class="familiar-fields"><label>代號<input data-holding-field="symbol" value="${escapeHtml(h.symbol)}" maxlength="12" placeholder="例如 0050"></label><label>股數<input data-holding-field="quantity" type="number" min="0" step="1" value="${Number(h.quantity||0)}"></label>${category==='lever'?`<label>曝險倍數<input data-holding-field="beta" type="number" min="0" max="10" step="0.1" value="${Number(h.beta??2)}"></label>`:''}${custom?`<label>個股佔比 %<input data-holding-field="targetWeight" type="number" min="0" max="100" value="${Number(h.targetWeight??100/Math.max(1,rows.length))}"></label>`:''}</div><div class="helper-text">目前價格 ${priceOf(h)?money2(priceOf(h)):'等待報價'} · 市值 ${money(marketValue(h))}</div><details><summary>手動價格與進階資料</summary><div class="familiar-fields"><label>手動價格（新台幣）<input data-holding-field="manualPrice" type="number" min="0" step="0.01" value="${Number(h.manualPrice||0)}"></label><label>Beta<input data-holding-field="beta" type="number" step="0.1" value="${Number(h.beta||0)}"></label></div></details></div>`).join('')}<button class="secondary-button" data-add-familiar="${category}">新增${title}${category==='cash'?'標的':''}</button></article>`;
+  }
+  function renderFamiliarSettings() {
+    if (!$('familiarContent')) return;
+    document.querySelectorAll('[data-settings-section]').forEach(button=>button.setAttribute('aria-selected',String(button.dataset.settingsSection===settingsSection)));
+    let html='';
+    if(settingsSection==='cash') html=`<article class="panel familiar-group"><h2>現金</h2><div class="familiar-fx">USD/TWD 匯率 <strong>${state.usdTwd?Number(state.usdTwd).toFixed(4):'尚未更新'}</strong><button class="text-button" data-refresh-fx>更新匯率</button><small>${escapeHtml(state.fxDate||'可手動填寫匯率')}</small></div><fieldset class="cash-reasons"><legend>本次現金變動原因</legend>${[['cost','手續費 / 交易成本'],['flow','新資金投入 / 提領'],['correction','資料修正']].map(([value,label])=>`<label><input type="radio" name="cashReason" value="${value}" ${(state.cashReason||'flow')===value?'checked':''}>${label}</label>`).join('')}</fieldset><div class="familiar-fields">${familiarField('新台幣 TWD','cash',state.cash)}${familiarField('美金 USD','cashUsd',state.cashUsd,'0.01')}${familiarField('USD/TWD 匯率','usdTwd',state.usdTwd,'0.0001')}</div><p class="field-note">美金以此匯率換算新台幣。現金合計 ${money(getPortfolio().cashBalance)}。變動原因會保存在備份內的現金異動紀錄。</p></article><article class="panel familiar-group"><h2>類現金配置方式</h2><div class="familiar-switch"><button data-cash-mode="auto" aria-pressed="${state.settings.cashMode!=='custom'}">自動配置</button><button data-cash-mode="custom" aria-pressed="${state.settings.cashMode==='custom'}">自訂比例</button></div>${familiarField('現金部位內的真實現金比例 %','realCashPct',state.settings.realCashPct??10,'1','100')}<p class="field-note">此比例只分配現金部位，不代表占總資產的比例。類現金 ETF 有價格波動。</p></article>${familiarHoldings('cash')}`;
+    if(settingsSection==='holdings') html=familiarHoldings('lever')+familiarHoldings('core');
+    if(settingsSection==='beta') html=`<article class="panel familiar-group"><h2>Beta 與再平衡設定</h2><div class="familiar-step"><label>目標 Beta <small>每次 ±0.1</small></label><button data-step="targetBeta:-0.1" aria-label="目標 Beta 減少 0.1">−</button><input aria-label="目標 Beta" type="number" min="0" max="5" step="0.1" data-setting="targetBeta" value="${state.settings.targetBeta}"><button data-step="targetBeta:0.1" aria-label="目標 Beta 增加 0.1">＋</button></div><div class="familiar-step"><label>再平衡容忍度 <small>每次 ±1%</small></label><button data-step="tolerance:-1" aria-label="再平衡容忍度減少 1%">−</button><input aria-label="再平衡容忍度百分比" type="number" min="0" max="50" step="1" data-setting="tolerance" value="${state.settings.tolerance}"><button data-step="tolerance:1" aria-label="再平衡容忍度增加 1%">＋</button></div><p class="field-note">Beta 是目標，持股是工具，現金是結果；超出容忍區間時會提醒再平衡。</p><div class="familiar-step"><label>原形目標比例 <small>每次 ±5%</small></label><button data-step="coreTarget:-5" aria-label="原形目標比例減少 5%">−</button><input aria-label="原形目標比例百分比" type="number" min="0" max="100" step="5" data-setting="coreTarget" value="${state.settings.coreTarget??state.settings.target.core}"><button data-step="coreTarget:5" aria-label="原形目標比例增加 5%">＋</button></div><p class="field-note">依原形比例與槓桿標的的加權曝險倍數推算槓桿配置，剩餘為現金。</p>${state.settings.allocationMode!=='beta'?'<p class="migration-note">目前保留你原有的三類目標比例。修改 Beta／原形參數，或按下方按鈕，即切換為 Beta 自動試算。</p><button class="secondary-button" data-enable-model>使用 Beta 自動試算</button>':''}</article>`;
+    $('familiarContent').innerHTML=html;
+    renderFamiliarSummary();
+  }
+  function saveFamiliarValue(key,value) {
+    if(!Number.isFinite(value)||value<0) {notify('請輸入 0 或正數');return false;}
+    const limits={targetBeta:5,tolerance:50,coreTarget:100,realCashPct:100};
+    if(key in limits && value>limits[key]) {notify(`此欄最大為 ${limits[key]}`);return false;}
+    if(key==='usdTwd' && value<=0) {notify('匯率必須大於 0');return false;}
+    if(['cash','cashUsd','usdTwd'].includes(key)) {
+      const oldValue=Number(state[key]||0);
+      state[key]=value;
+      if(key!=='usdTwd' && oldValue!==value) {
+        state.cashChanges=state.cashChanges||[];
+        state.cashChanges.push({at:new Date().toISOString(),currency:key==='cash'?'TWD':'USD',before:oldValue,after:value,reason:state.cashReason||'flow'});
+      }
+    } else {
+      state.settings[key]=value;
+      if(['targetBeta','coreTarget'].includes(key)) state.settings.allocationMode='beta';
+    }
+    syncModelTargets();persist();renderAll();
+    $('settingsSaveStatus').textContent='已自動儲存';
+    return true;
+  }
+  async function refreshFx() {
+    try {
+      const r=await fetch('/api/fx'); const data=await r.json();
+      if(!r.ok||!(data.rate>0)) throw new Error(data.error||'匯率更新失敗');
+      state.usdTwd=data.rate;state.fxDate=data.date;persist();renderAll();renderFamiliarSettings();notify('USD/TWD 匯率已更新');
+    } catch(e){notify(`${e.message}，可手動填入匯率`);}
+  }
+  function initFamiliarSettings() {
+    const page=$('page-settings');
+    page.querySelector('.page-intro h2').textContent='參數設定';
+    page.querySelector('.page-intro p').textContent='調整持股、現金與 Beta 試算條件';
+    const workspace=document.createElement('div');workspace.id='familiarWorkspace';
+    workspace.innerHTML='<div class="panel familiar-summary"><strong id="familiarSummary"></strong><p id="familiarValidation"></p></div><div class="familiar-tabs" role="tablist" aria-label="設定分類"><button role="tab" data-settings-section="cash">現金</button><button role="tab" data-settings-section="holdings">持股</button><button role="tab" data-settings-section="beta">Beta 參數</button></div><div id="familiarContent"></div>';
+    page.insertBefore(workspace,page.querySelector('.settings-grid'));
+    const grid=page.querySelector('.settings-grid');
+    grid.children[0].hidden=true;grid.children[1].hidden=true;
+    const details=document.createElement('details');details.className='familiar-advanced';details.innerHTML='<summary>進階設定與行情連線</summary>';
+    page.insertBefore(details,grid);details.append(grid);
+    const backupCard=grid.querySelector('.wide-card');
+    page.insertBefore(backupCard,details);
+    backupCard.querySelector('h2').textContent='資料備份';
+    $('backupBtn').textContent='匯出完整備份';
+    $('saveSettingsBtn').textContent='儲存進階設定';
+    // Existing portfolio values and explicit target allocations stay intact on migration.
+    if(state.settings.coreTarget==null) state.settings.coreTarget=Number(state.settings.target.core||0);
+    if(state.settings.realCashPct==null && localStorage.getItem(STORE_KEY)) {
+      const portfolio=getPortfolio();
+      state.settings.realCashPct=portfolio.cash ? portfolio.cashBalance/portfolio.cash*100 : 10;
+    }
+    if(!localStorage.getItem(STORE_KEY)) {state.settings.allocationMode='beta';state.settings.coreTarget=0;}
+    workspace.addEventListener('input',event=>{
+      const input=event.target;
+      if(input.name==='cashReason') {state.cashReason=input.value;persist();return;}
+      if(input.dataset.setting) {saveFamiliarValue(input.dataset.setting,Number(input.value));return;}
+      if(input.dataset.holdingField) {
+        const h=state.holdings.find(row=>row.id===input.closest('[data-holding]').dataset.holding);if(!h)return;
+        const key=input.dataset.holdingField;
+        if(key==='symbol') {
+          const symbol=input.value.trim().toUpperCase();
+          if(symbol && !/^[A-Z0-9.-]{1,12}$/.test(symbol)){notify('請輸入有效標的代號');input.value=h.symbol;return;}
+          if(symbol!==h.symbol){h.symbol=symbol;h.name=symbol;h.quote=null;h.manualPrice=0;}
+        } else {
+          const value=Number(input.value);
+          if(!Number.isFinite(value)||value<0||(key==='targetWeight'&&value>100)||(key==='beta'&&value>10)){notify('請檢查欄位數值');input.value=h[key]||0;return;}
+          h[key]=value;
+        }
+        persist();renderAll();
+      }
+    });
+    workspace.addEventListener('change',event=>{
+      if(event.target.dataset.holdingField==='symbol' && apiConfigured) refreshQuotes();
+    });
+    workspace.addEventListener('click',event=>{
+      const button=event.target.closest('button');if(!button)return;
+      if(button.dataset.settingsSection){settingsSection=button.dataset.settingsSection;renderFamiliarSettings();}
+      if(button.dataset.addFamiliar){const cat=button.dataset.addFamiliar;state.holdings.push({id:uid(),symbol:'',name:'',category:cat,quantity:0,beta:cat==='lever'?2:cat==='core'?1:0,cost:0,manualPrice:0,targetWeight:100});persist();renderAll();renderFamiliarSettings();}
+      if(button.dataset.removeFamiliar){const id=button.dataset.removeFamiliar;const h=state.holdings.find(x=>x.id===id);if(h&&confirm(`移除 ${h.symbol||'此標的'}？`)){state.holdings=state.holdings.filter(x=>x.id!==id);persist();renderAll();renderFamiliarSettings();}}
+      if(button.dataset.distribution){const [cat,mode]=button.dataset.distribution.split(':');state.settings.distribution=state.settings.distribution||{};state.settings.distribution[cat]=mode;state.holdings.filter(h=>h.category===cat).forEach(h=>{if(h.targetWeight==null)h.targetWeight=100/state.holdings.filter(x=>x.category===cat).length;});persist();renderAll();renderFamiliarSettings();}
+      if(button.dataset.cashMode){state.settings.cashMode=button.dataset.cashMode;persist();renderFamiliarSettings();}
+      if(button.dataset.step){const [key,step]=button.dataset.step.split(':');saveFamiliarValue(key,Math.max(0,Math.min(key==='targetBeta'?5:key==='tolerance'?50:100,Math.round((Number(state.settings[key]||0)+Number(step))*10)/10)));renderFamiliarSettings();}
+      if(button.hasAttribute('data-enable-model')){state.settings.allocationMode='beta';syncModelTargets();persist();renderAll();renderFamiliarSettings();}
+      if(button.hasAttribute('data-refresh-fx'))refreshFx();
+    });
+    if(!state.usdTwd)refreshFx();
+  }
+
   function init() {
-    initCashEditor(); bindEvents(); renderAll(); renderSettings();
+    initCashEditor(); initFamiliarSettings(); bindEvents(); renderAll(); renderSettings();
     checkApiStatus();
     if ('serviceWorker' in navigator && location.protocol.startsWith('https')) {
       // No service worker is required; keeping app data browser-local avoids stale quote caching.
