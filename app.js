@@ -23,6 +23,7 @@
   const WS_KEY_STORE = 'betreeFugleWsKey.v1';
   let toastTimer = null;
   let currentPage = 'overview';
+  let marketRangeMonths = 1;
 
   const $ = id => document.getElementById(id);
   const clone = value => JSON.parse(JSON.stringify(value));
@@ -155,6 +156,7 @@
     const q = state.quoteCache[symbol];
     const h = state.marketHistory && state.marketHistory.symbol === symbol ? state.marketHistory : null;
     const price = Number(q?.price || 0), high = Number(h?.highClose || 0);
+    renderMarketChart(h, q);
     if (price && high) {
       const distance = (price / high - 1) * 100;
       $('marketDistance').textContent = `${distance.toFixed(2)}%`;
@@ -170,6 +172,49 @@
       $('marketHighDate').textContent = h ? `高點日期 ${h.highDate}` : '—'; $('marketQuoteTime').textContent = q ? fmtTime(q.quoteTime || q.lastUpdated) : '尚無報價';
       $('marketSourceText').textContent = apiConfigured ? '資料來源：Fugle' : '資料來源：尚未連線';
     }
+  }
+  function renderMarketChart(history, quote) {
+    document.querySelectorAll('#marketRanges button').forEach(button => {
+      const active = Number(button.dataset.range) === marketRangeMonths;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    const all = (history?.data || []).filter(row => row.date && Number(row.close) > 0)
+      .map(row => ({date: row.date.slice(0,10), close: Number(row.close)}))
+      .sort((a,b) => a.date.localeCompare(b.date));
+    if (quote?.date && Number(quote.price) > 0) {
+      const date = quote.date.slice(0,10);
+      const existing = all.find(row => row.date === date);
+      if (existing) existing.close = Number(quote.price);
+      else all.push({date, close: Number(quote.price)});
+      all.sort((a,b) => a.date.localeCompare(b.date));
+    }
+    if (!history || all.length < 2) {
+      $('marketChart').innerHTML = '<p class="empty-cell">等待歷史走勢資料，請按「更新市場水位」。</p>';
+      $('marketChartDates').textContent = '';
+      return;
+    }
+    const end = all[all.length-1].date;
+    const cutoff = new Date(`${end}T00:00:00Z`);
+    cutoff.setUTCMonth(cutoff.getUTCMonth() - marketRangeMonths);
+    const rows = all.filter(row => row.date >= cutoff.toISOString().slice(0,10));
+    const high = Math.max(Number(history.highClose) || 0, ...all.map(row => row.close));
+    const floor = Math.min(.7, ...rows.map(row => row.close/high)) - .015;
+    const ceiling = Math.max(1, ...rows.map(row => row.close/high)) + .025;
+    const left=78, right=822, top=22, bottom=320;
+    const y = ratio => top + (ceiling-ratio)/(ceiling-floor)*(bottom-top);
+    const x = i => left + i/Math.max(1,rows.length-1)*(right-left);
+    const bands = [[1,.9,'#dce8df','正常'],[.9,.8,'#eee2c5','觀察'],[.8,floor,'#ecd2d2','股災']];
+    let svg = bands.map(([upper,lower,color,label]) => `<rect x="12" y="${y(upper)}" width="876" height="${y(lower)-y(upper)}" fill="${color}"/><text x="23" y="${y(upper)+39}" fill="#637369">${label}</text>`).join('');
+    [1,.9,.8].forEach(ratio => { svg += `<line x1="${left}" x2="${right}" y1="${y(ratio)}" y2="${y(ratio)}" stroke="#8994a0" stroke-dasharray="6 6"/><text x="23" y="${y(ratio)+17}">${Math.round((ratio-1)*100)}%</text><text x="878" y="${y(ratio)+17}" text-anchor="end">${(high*ratio).toFixed(2)}</text>`; });
+    const points = rows.map((row,i) => `${x(i)},${y(row.close/high)}`).join(' ');
+    svg += `<polyline points="${points}" fill="none" stroke="#334155" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>`;
+    rows.forEach((row,i) => { svg += `<circle cx="${x(i)}" cy="${y(row.close/high)}" r="8" fill="transparent"><title>${row.date} · ${row.close.toFixed(2)} 元 · 距高點 ${((row.close/high-1)*100).toFixed(2)}%</title></circle>`; });
+    const last = rows[rows.length-1];
+    svg += `<circle cx="${x(rows.length-1)}" cy="${y(last.close/high)}" r="5" fill="#70877b" stroke="white" stroke-width="2"/>`;
+    [...new Set([0,Math.round((rows.length-1)/3),Math.round((rows.length-1)*2/3),rows.length-1])].forEach(i => { svg += `<text x="${x(i)}" y="345" text-anchor="middle">${rows[i].date.slice(5).replace('-','/')}</text>`; });
+    $('marketChart').innerHTML = `<svg viewBox="0 0 900 360" role="img" aria-label="${escapeHtml(history.symbol)} 最近 ${marketRangeMonths} 個月走勢，依 52 週高點劃分回檔區間"><title>${escapeHtml(history.symbol)} 股價走勢與回檔區間</title>${svg}</svg>`;
+    $('marketChartDates').textContent = `${rows[0].date} — ${end}`;
   }
   function renderHoldings() {
     const p = getPortfolio();
@@ -651,6 +696,12 @@
     $('benchmarkSymbol').addEventListener('change',()=>{$('settingsSaveStatus').textContent='尚有未儲存變更';});
     $('refreshAllBtn').addEventListener('click',async()=>{if(apiConfigured){await refreshQuotes();await refreshMarketHistory(false);notify('行情更新完成');}else notify('請先設定 Fugle API；目前使用手動價格。');});
     $('marketRefreshBtn').addEventListener('click',()=>refreshMarketHistory(true));
+    $('marketRanges').addEventListener('click', event => {
+      const button = event.target.closest('button[data-range]');
+      if (!button) return;
+      marketRangeMonths = Number(button.dataset.range);
+      renderMarketCard();
+    });
     $('checkApiBtn').addEventListener('click',()=>checkApiStatus());
     $('saveWsKeyBtn').addEventListener('click',()=>{const key=$('wsApiKey').value.trim();if(!key){notify('請先輸入 Fugle API Key');return;}localStorage.setItem(WS_KEY_STORE,key);connectFugleWebSocket();notify('WebSocket Key 已儲存在本機');});
     $('clearWsKeyBtn').addEventListener('click',()=>{localStorage.removeItem(WS_KEY_STORE);$('wsApiKey').value='';stopQuoteTimer();startQuoteTimer();notify('已清除本機 WebSocket Key');});
