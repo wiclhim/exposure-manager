@@ -340,7 +340,7 @@
     $('marketDot').classList.toggle('ok', serviceReady); $('marketDot').classList.toggle('bad', !serviceReady);
     $('sideStatusDot').classList.toggle('ok', serviceReady); $('sideStatusDot').classList.toggle('bad', !serviceReady);
   }
-  function renderAll() { syncModelTargets(); renderOverview(); if(currentPage==='holdings')renderHoldings(); if(currentPage==='rebalance')renderRebalance(); if(currentPage==='history')renderHistory(); if(currentPage==='settings')renderFamiliarSummary(); }
+  function renderAll() { syncModelTargets(); renderOverview(); if(currentPage==='holdings')renderHoldings(); if(currentPage==='rebalance')renderRebalance(); if(currentPage==='history')renderHistory(); if(currentPage==='settings'){renderFamiliarSummary();refreshFamiliarHoldingValues();} }
 
   async function checkApiStatus() {
     try {
@@ -881,6 +881,15 @@
     const custom = category==='cash' ? state.settings.cashMode==='custom' : state.settings.distribution?.[category]==='custom';
     return `<article class="panel familiar-group"><div class="panel-top"><h2>${title} <small>${rows.length} 筆標的</small></h2></div><div class="familiar-switch"><span>個股佔比分配方式</span><button data-distribution="${category}:auto" aria-pressed="${!custom}">自動分配</button><button data-distribution="${category}:custom" aria-pressed="${custom}">自訂個股佔比</button></div>${rows.map((h,i)=>`<div class="familiar-holding" data-holding="${escapeHtml(h.id)}"><div class="panel-top"><strong>${title} ${i+1} ${escapeHtml(h.name!==h.symbol?h.name||'':'')}</strong><button class="text-button danger-text" data-remove-familiar="${escapeHtml(h.id)}">移除</button></div><div class="familiar-fields"><label>代號<input data-holding-field="symbol" value="${escapeHtml(h.symbol)}" maxlength="12" placeholder="例如 0050"></label><label>股數<input data-holding-field="quantity" type="number" min="0" step="1" value="${Number(h.quantity||0)}"></label>${category==='lever'?`<label>曝險倍數<input data-holding-field="beta" type="number" min="0" max="10" step="0.1" value="${Number(h.beta??2)}"></label>`:''}${custom?`<label>個股佔比 %<input data-holding-field="targetWeight" type="number" min="0" max="100" value="${Number(h.targetWeight??100/Math.max(1,rows.length))}"></label>`:''}</div><div class="helper-text">目前價格 ${priceOf(h)?money2(priceOf(h)):'等待報價'} · 市值 ${money(marketValue(h))}</div><details><summary>手動價格與進階資料</summary><div class="familiar-fields"><label>手動價格（新台幣）<input data-holding-field="manualPrice" type="number" min="0" step="0.01" value="${Number(h.manualPrice||0)}"></label><label>Beta<input data-holding-field="beta" type="number" step="0.1" value="${Number(h.beta||0)}"></label></div></details></div>`).join('')}<button class="secondary-button" data-add-familiar="${category}">新增${title}${category==='cash'?'標的':''}</button></article>`;
   }
+  function refreshFamiliarHoldingValues() {
+    document.querySelectorAll('.familiar-holding[data-holding]').forEach(card=>{
+      const holding=state.holdings.find(h=>h.id===card.dataset.holding);
+      const summary=card.querySelector(':scope > .helper-text');
+      if(!holding||!summary)return;
+      const price=priceOf(holding);
+      summary.textContent=price>0 ? `${number(holding.quantity)} 股 × ${money2(price)} ＝ 持有市值 ${money2(marketValue(holding))}` : `${number(holding.quantity)} 股 · 等待報價，尚無法計算持有市值`;
+    });
+  }
   function renderFamiliarSettings() {
     if (!$('familiarContent')) return;
     document.querySelectorAll('[data-settings-section]').forEach(button=>button.setAttribute('aria-selected',String(button.dataset.settingsSection===settingsSection)));
@@ -890,6 +899,7 @@
     if(settingsSection==='beta') html=`<article class="panel familiar-group"><h2>Beta 與再平衡設定</h2><div class="familiar-step"><label>目標 Beta <small>每次 ±0.1</small></label><button data-step="targetBeta:-0.1" aria-label="目標 Beta 減少 0.1">−</button><input aria-label="目標 Beta" type="number" min="0" max="5" step="0.1" data-setting="targetBeta" value="${state.settings.targetBeta}"><button data-step="targetBeta:0.1" aria-label="目標 Beta 增加 0.1">＋</button></div><div class="familiar-step"><label>再平衡容忍度 <small>每次 ±1%</small></label><button data-step="tolerance:-1" aria-label="再平衡容忍度減少 1%">−</button><input aria-label="再平衡容忍度百分比" type="number" min="0" max="50" step="1" data-setting="tolerance" value="${state.settings.tolerance}"><button data-step="tolerance:1" aria-label="再平衡容忍度增加 1%">＋</button></div><p class="field-note">Beta 是目標，持股是工具，現金是結果；超出容忍區間時會提醒再平衡。</p><div class="familiar-step"><label>原形目標比例 <small>每次 ±5%</small></label><button data-step="coreTarget:-5" aria-label="原形目標比例減少 5%">−</button><input aria-label="原形目標比例百分比" type="number" min="0" max="100" step="5" data-setting="coreTarget" value="${state.settings.coreTarget??state.settings.target.core}"><button data-step="coreTarget:5" aria-label="原形目標比例增加 5%">＋</button></div><p class="field-note">依原形比例與槓桿標的的加權曝險倍數推算槓桿配置，剩餘為現金。</p>${state.settings.allocationMode!=='beta'?'<p class="migration-note">目前保留你原有的三類目標比例。修改 Beta／原形參數，或按下方按鈕，即切換為 Beta 自動試算。</p><button class="secondary-button" data-enable-model>使用 Beta 自動試算</button>':''}</article>`;
     $('familiarContent').innerHTML=html;
     renderFamiliarSummary();
+    refreshFamiliarHoldingValues();
   }
   function saveFamiliarValue(key,value) {
     if(!Number.isFinite(value)||value<0) {notify('請輸入 0 或正數');return false;}
