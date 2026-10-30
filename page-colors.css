@@ -1,0 +1,48 @@
+/* Shared warm neutrals from the overview Beta card and rebalance workspace. */
+:is(#page-holdings,#page-history,#page-settings){--page-ink:#303b40;--page-muted:#747d73;--page-line:#e5e4de;--page-soft:#f5f4f0;--page-selected:#ded9d0;--page-green:#7f9388;color:var(--page-ink)}
+:is(#page-holdings,#page-history,#page-settings) :is(.panel,.mini-stat,.summary-card,.cash-input-strip){background:#fdfdfc;border-color:#e9e8e2;box-shadow:0 8px 28px #25303908}
+:is(#page-holdings,#page-history,#page-settings) :is(h2,h3,strong){color:var(--page-ink)}
+:is(#page-holdings,#page-history,#page-settings) :is(.page-intro p,.helper-text,.field-note,.settings-description,.notice-line,.mini-stat span,.summary-card span,.summary-card small,.section-label,.familiar-fx,.familiar-step label,.familiar-step small,.familiar-advanced>summary){color:var(--page-muted)}
+:is(#page-holdings,#page-history,#page-settings) .primary-button{background:var(--page-green);color:#fff;box-shadow:0 4px 12px #7f93881f}
+:is(#page-holdings,#page-history,#page-settings) .primary-button:hover{background:#6c8276}
+:is(#page-holdings,#page-history,#page-settings) .secondary-button{background:var(--page-soft);border-color:var(--page-line);color:#59665d}
+:is(#page-holdings,#page-history,#page-settings) .secondary-button:hover{background:#e9e6df}
+:is(#page-holdings,#page-history,#page-settings) :is(.text-button,.table-action){color:#5d7969}
+:is(#page-holdings,#page-history,#page-settings) :is(.danger-text,.table-action.danger){color:#ad635e}
+:is(#page-holdings,#page-history,#page-settings) :is(input,select){border-color:#dfdfd6;color:#35443a;accent-color:var(--page-green)}
+:is(#page-holdings,#page-history,#page-settings) :is(input,select):focus{border-color:#91a397;box-shadow:0 0 0 3px #7f938815;outline:none}
+:is(#page-holdings,#page-history,#page-settings) :is(th,td){border-color:#ecece6}
+:is(#page-holdings,#page-history,#page-settings) th{color:#83897f;background:#f7f7f3}
+:is(#page-holdings,#page-history,#page-settings) td{color:#5d695e}
+:is(#page-holdings,#page-history,#page-settings) tbody tr:hover{background:#f8f9f4}
+:is(#page-holdings,#page-history,#page-settings) :is(.empty-cell,.quote-status,.asset-name small){color:#858e82}
+:is(#page-holdings,#page-history,#page-settings) .asset-avatar{background:#eeeaf1;color:#7b6f86}
+:is(#page-holdings,#page-history,#page-settings) .asset-name strong{color:#35443a}
+:is(#page-holdings,#page-history,#page-settings) .tag.lever{background:#f0ebf3;color:#7f7189}
+:is(#page-holdings,#page-history,#page-settings) .tag.core{background:#eaf0e8;color:#647c68}
+:is(#page-holdings,#page-history,#page-settings) .tag.cash{background:#f0edde;color:#877e5f}
+:is(#page-holdings,#page-history,#page-settings) .quote-status.live{color:#658774}
+#page-settings .familiar-summary{background:#edf2eb;border-color:#dce5d9}
+#page-settings .familiar-summary p{color:#758170}
+#page-settings .familiar-tabs{background:var(--page-soft)}
+#page-settings .familiar-tabs button{color:#73796f}
+#page-settings .familiar-tabs button[aria-selected=true]{background:var(--page-selected);color:#354039;box-shadow:0 2px 8px #50493b0b}
+#page-settings .familiar-holding{background:#fafbf7;border-color:#e2e5da}
+#page-settings .familiar-holding details{color:#848b7d}
+#page-settings :is(.familiar-fields label,.familiar-group>label,.cash-reasons label,.cash-reasons legend){color:#687563}
+#page-settings :is(.familiar-switch button,.familiar-step button){background:#fafaf7;border-color:#e1e2d8;color:#65715f}
+#page-settings .familiar-switch button[aria-pressed=true]{background:var(--page-selected);border-color:#c8c2b8;color:#354039}
+#page-settings .familiar-switch button:hover{background:#ebe8df}
+#page-settings .cash-reasons{border-color:#e1e4d8}
+#page-settings .provider-logo{background:#e8eee4;color:#71866a}
+#page-settings .api-state-box{background:#f5f5ef;color:#737e6b}
+#page-settings .migration-note{background:#fff8e8;color:#977f43}
+#page-settings .allocation-total{border-color:#e9e9df;color:#79836f}
+#page-settings .settings-save-row{color:#7d8874}
+/* Holdings and swap dialogs use the same palette as their parent workspaces. */
+:is(#holdingModal,#swapModal) .modal{background:#fdfdfb;color:#303b40}
+:is(#holdingModal,#swapModal) .primary-button{background:#7f9388;box-shadow:none}
+:is(#holdingModal,#swapModal) .secondary-button{background:#f5f4f0;border-color:#e5e4de;color:#59665d}
+:is(#holdingModal,#swapModal) :is(.modal-close,.modal-note,.swap-preview){background:#f4f5ee;color:#78816f;border-color:#e5e7dc}
+:is(#holdingModal,#swapModal) :is(input,select,.radio-card){border-color:#dfe3d7;color:#3b4836;accent-color:#7f9388}
+:is(#holdingModal,#swapModal) :is(input,select):focus{border-color:#91a397;box-shadow:0 0 0 3px #7f938815}
