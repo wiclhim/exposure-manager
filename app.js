@@ -934,6 +934,42 @@
     });
   }
   let settingsSection = 'cash';
+  let cashAdjustmentDraft={currency:'TWD',amount:''};
+  function cashAdjustmentPreview(currency,raw,reason=state.cashReason||'flow') {
+    if(!['TWD','USD'].includes(currency)||!['cost','flow','correction'].includes(reason))throw new Error('請選擇有效幣別與變動原因');
+    if(raw==null||String(raw).trim()==='')throw new Error('請輸入變動金額；負數扣款，正數入金');
+    const delta=Number(raw),minor=Math.round(delta*100);
+    if(!Number.isFinite(delta)||!Number.isSafeInteger(minor)||Math.abs(delta*100-minor)>1e-6||minor===0)throw new Error('請輸入非零金額，最多兩位小數');
+    if(reason==='cost'&&minor>=0)throw new Error('手續費／交易成本請輸入負數，例如 -100');
+    const key=currency==='TWD'?'cash':'cashUsd',before=Number(state[key]||0),beforeMinor=Math.round(before*100);
+    if(!Number.isSafeInteger(beforeMinor)||beforeMinor<0||!Number.isSafeInteger(beforeMinor+minor))throw new Error('現金餘額無效，請先修正餘額');
+    if(Math.abs(before*100-beforeMinor)>1e-6)throw new Error('請先將目前現金餘額修正為最多兩位小數');
+    const after=(beforeMinor+minor)/100;
+    if(after<0)throw new Error(`${currency} 現金餘額不足，這筆扣款會超過目前餘額`);
+    const fx=currency==='USD'?Number(state.usdTwd):1;
+    if((!Number.isFinite(fx)||!(fx>0))&&currency==='USD')throw new Error('請先設定有效的 USD/TWD 匯率');
+    return {key,currency,before,after,delta:minor/100,reason,fx,assetChangeTwd:minor/100*fx};
+  }
+  function applyCashAdjustment(currency,raw,reason) {
+    const plan=cashAdjustmentPreview(currency,raw,reason);
+    const changes=Array.isArray(state.cashChanges)?state.cashChanges:[];
+    const entry={at:new Date().toISOString(),currency:plan.currency,before:plan.before,after:plan.after,delta:plan.delta,reason:plan.reason,source:'adjustment',fx:plan.fx,assetChangeTwd:plan.assetChangeTwd};
+    state.cashChanges=[...changes,entry];state[plan.key]=plan.after;
+    return plan;
+  }
+  function cashAdjustmentEditor() {
+    const latest=state.cashChanges?.at(-1),labels={cost:'手續費／交易成本',flow:'新資金投入／提領',correction:'資料修正'};
+    const recent=latest?`<p class="field-note">最近一筆：${escapeHtml(labels[latest.reason]||'現金變動')} · ${escapeHtml(latest.currency)} ${number(Number(latest.after)-Number(latest.before))}；餘額 ${number(latest.before)} → ${number(latest.after)}</p>`:'';
+    return `<section class="cash-adjustment" aria-labelledby="cashAdjustmentTitle"><h3 id="cashAdjustmentTitle">記錄一筆現金變動</h3><p class="field-note">上方是目前餘額；這裡填本次增加或減少的金額。手續費請填負數，例如 -100。輸入時只預覽，按「套用現金變動」才會扣款一次。</p><div class="familiar-fields"><label>變動幣別<select id="cashAdjustmentCurrency" aria-label="變動幣別"><option value="TWD" ${cashAdjustmentDraft.currency==='TWD'?'selected':''}>新台幣 TWD</option><option value="USD" ${cashAdjustmentDraft.currency==='USD'?'selected':''}>美金 USD</option></select></label><label>變動金額<input id="cashAdjustmentAmount" type="number" step="0.01" value="${escapeHtml(cashAdjustmentDraft.amount)}" placeholder="例如 -100" aria-describedby="cashAdjustmentPreview" /></label></div><p class="field-note" id="cashAdjustmentPreview" role="status"></p><button type="button" class="secondary-button" data-apply-cash-adjustment disabled>套用現金變動</button>${recent}</section>`;
+  }
+  function renderCashAdjustmentPreview() {
+    const preview=$('cashAdjustmentPreview'),button=document.querySelector('[data-apply-cash-adjustment]');if(!preview||!button)return;
+    try {
+      const plan=cashAdjustmentPreview(cashAdjustmentDraft.currency,cashAdjustmentDraft.amount);
+      preview.textContent=`${plan.currency} 現金 ${number(plan.before)} → ${number(plan.after)}；總資產${plan.delta<0?'減少':'增加'} NT$${number(Math.abs(plan.assetChangeTwd))}。`;
+      button.disabled=false;
+    } catch(error){preview.textContent=error.message;button.disabled=true;}
+  }
   function groupWeights(category) {
     const holdings = state.holdings.filter(h=>h.category===category && h.symbol);
     const custom = category==='cash' ? state.settings.cashMode==='custom' : state.settings.distribution?.[category] === 'custom';
@@ -984,12 +1020,13 @@
     if (!$('familiarContent')) return;
     document.querySelectorAll('[data-settings-section]').forEach(button=>button.setAttribute('aria-selected',String(button.dataset.settingsSection===settingsSection)));
     let html='';
-    if(settingsSection==='cash') html=`<article class="panel familiar-group"><h2>現金</h2><div class="familiar-fx">USD/TWD 匯率 <strong>${state.usdTwd?Number(state.usdTwd).toFixed(4):'尚未更新'}</strong><button class="text-button" data-refresh-fx>更新匯率</button><small>${escapeHtml(state.fxDate||'可手動填寫匯率')}</small></div><fieldset class="cash-reasons"><legend>本次現金變動原因</legend>${[['cost','手續費 / 交易成本'],['flow','新資金投入 / 提領'],['correction','資料修正']].map(([value,label])=>`<label><input type="radio" name="cashReason" value="${value}" ${(state.cashReason||'flow')===value?'checked':''}>${label}</label>`).join('')}</fieldset><div class="familiar-fields">${familiarField('新台幣 TWD','cash',state.cash)}${familiarField('美金 USD','cashUsd',state.cashUsd,'0.01')}${familiarField('USD/TWD 匯率','usdTwd',state.usdTwd,'0.0001')}</div><p class="field-note">美金以此匯率換算新台幣。現金合計 ${money(getPortfolio().cashBalance)}。變動原因會保存在備份內的現金異動紀錄。</p></article><article class="panel familiar-group"><h2>類現金配置方式</h2><div class="familiar-switch"><button data-cash-mode="auto" aria-pressed="${state.settings.cashMode!=='custom'}">自動配置</button><button data-cash-mode="custom" aria-pressed="${state.settings.cashMode==='custom'}">自訂比例</button></div>${familiarField('現金部位內的真實現金比例 %','realCashPct',state.settings.realCashPct??10,'1','100')}<p class="field-note">此比例只分配現金部位，不代表占總資產的比例。類現金 ETF 有價格波動。</p></article>${familiarHoldings('cash')}`;
+    if(settingsSection==='cash') html=`<article class="panel familiar-group"><h2>現金</h2><div class="familiar-fx">USD/TWD 匯率 <strong>${state.usdTwd?Number(state.usdTwd).toFixed(4):'尚未更新'}</strong><button class="text-button" data-refresh-fx>更新匯率</button><small>${escapeHtml(state.fxDate||'可手動填寫匯率')}</small></div><fieldset class="cash-reasons"><legend>本次現金變動原因</legend>${[['cost','手續費 / 交易成本'],['flow','新資金投入 / 提領'],['correction','資料修正']].map(([value,label])=>`<label><input type="radio" name="cashReason" value="${value}" ${(state.cashReason||'flow')===value?'checked':''}>${label}</label>`).join('')}</fieldset><div class="familiar-fields">${familiarField('新台幣 TWD（目前餘額）','cash',state.cash)}${familiarField('美金 USD（目前餘額）','cashUsd',state.cashUsd,'0.01')}${familiarField('USD/TWD 匯率','usdTwd',state.usdTwd,'0.0001')}</div><p class="field-note">美金以此匯率換算新台幣。現金合計 ${money(getPortfolio().cashBalance)}。直接修改上方數字是設定目前餘額；記錄手續費或提領請使用下方變動金額。異動會包含於完整備份。</p>${cashAdjustmentEditor()}</article><article class="panel familiar-group"><h2>類現金配置方式</h2><div class="familiar-switch"><button data-cash-mode="auto" aria-pressed="${state.settings.cashMode!=='custom'}">自動配置</button><button data-cash-mode="custom" aria-pressed="${state.settings.cashMode==='custom'}">自訂比例</button></div>${familiarField('現金部位內的真實現金比例 %','realCashPct',state.settings.realCashPct??10,'1','100')}<p class="field-note">此比例只分配現金部位，不代表占總資產的比例。類現金 ETF 有價格波動。</p></article>${familiarHoldings('cash')}`;
     if(settingsSection==='holdings') html=familiarHoldings('lever')+familiarHoldings('core');
     if(settingsSection==='beta') html=`<article class="panel familiar-group"><h2>Beta 與再平衡設定</h2><div class="familiar-step"><label>目標 Beta <small>每次 ±0.1</small></label><button data-step="targetBeta:-0.1" aria-label="目標 Beta 減少 0.1">−</button><input aria-label="目標 Beta" type="number" min="0" max="5" step="0.1" data-setting="targetBeta" value="${state.settings.targetBeta}"><button data-step="targetBeta:0.1" aria-label="目標 Beta 增加 0.1">＋</button></div><div class="familiar-step"><label>再平衡容忍度 <small>每次 ±1%</small></label><button data-step="tolerance:-1" aria-label="再平衡容忍度減少 1%">−</button><input aria-label="再平衡容忍度百分比" type="number" min="0" max="50" step="1" data-setting="tolerance" value="${state.settings.tolerance}"><button data-step="tolerance:1" aria-label="再平衡容忍度增加 1%">＋</button></div><p class="field-note">Beta 是目標，持股是工具，現金是結果；超出容忍區間時會提醒再平衡。</p><div class="familiar-step"><label>原形目標比例 <small>每次 ±5%</small></label><button data-step="coreTarget:-5" aria-label="原形目標比例減少 5%">−</button><input aria-label="原形目標比例百分比" type="number" min="0" max="100" step="5" data-setting="coreTarget" value="${state.settings.coreTarget??state.settings.target.core}"><button data-step="coreTarget:5" aria-label="原形目標比例增加 5%">＋</button></div><p class="field-note">依原形比例與槓桿標的的加權曝險倍數推算槓桿配置，剩餘為現金。</p>${state.settings.allocationMode!=='beta'?'<p class="migration-note">目前保留你原有的三類目標比例。修改 Beta／原形參數，或按下方按鈕，即切換為 Beta 自動試算。</p><button class="secondary-button" data-enable-model>使用 Beta 自動試算</button>':''}</article>`;
     $('familiarContent').innerHTML=html;
     renderFamiliarSummary();
     refreshFamiliarHoldingValues();
+    renderCashAdjustmentPreview();
   }
   function saveFamiliarValue(key,value) {
     if(!Number.isFinite(value)||value<0) {notify('請輸入 0 或正數');return false;}
@@ -1044,8 +1081,10 @@
     if(!localStorage.getItem(STORE_KEY)) {state.settings.allocationMode='beta';state.settings.coreTarget=0;}
     workspace.addEventListener('input',event=>{
       const input=event.target;
-      if(input.name==='cashReason') {state.cashReason=input.value;persist();return;}
-      if(input.dataset.setting) {saveFamiliarValue(input.dataset.setting,Number(input.value));return;}
+      if(input.name==='cashReason') {state.cashReason=input.value;persist();renderCashAdjustmentPreview();return;}
+      if(input.id==='cashAdjustmentAmount'){cashAdjustmentDraft.amount=input.value;renderCashAdjustmentPreview();return;}
+      if(input.id==='cashAdjustmentCurrency'){cashAdjustmentDraft.currency=input.value;renderCashAdjustmentPreview();return;}
+      if(input.dataset.setting) {saveFamiliarValue(input.dataset.setting,Number(input.value));renderCashAdjustmentPreview();return;}
       if(input.dataset.holdingField) {
         const h=state.holdings.find(row=>row.id===input.closest('[data-holding]').dataset.holding);if(!h)return;
         const key=input.dataset.holdingField;
@@ -1066,6 +1105,14 @@
     });
     workspace.addEventListener('click',event=>{
       const button=event.target.closest('button');if(!button)return;
+      if(button.hasAttribute('data-apply-cash-adjustment')){
+        try {
+          const plan=applyCashAdjustment(cashAdjustmentDraft.currency,cashAdjustmentDraft.amount);
+          cashAdjustmentDraft.amount='';syncModelTargets();persist();renderAll();renderFamiliarSettings();
+          notify(`已${plan.delta<0?'扣除':'增加'} ${plan.currency} ${number(Math.abs(plan.delta))}`);
+        } catch(error){notify(error.message);renderCashAdjustmentPreview();}
+        return;
+      }
       if(button.dataset.settingsSection){settingsSection=button.dataset.settingsSection;renderFamiliarSettings();}
       if(button.dataset.addFamiliar){const cat=button.dataset.addFamiliar;state.holdings.push({id:uid(),symbol:'',name:'',category:cat,quantity:0,beta:cat==='lever'?2:cat==='core'?1:0,cost:0,manualPrice:0,targetWeight:100});persist();renderAll();renderFamiliarSettings();}
       if(button.dataset.removeFamiliar){const id=button.dataset.removeFamiliar;const h=state.holdings.find(x=>x.id===id);if(h&&confirm(`移除 ${h.symbol||'此標的'}？`)){state.holdings=state.holdings.filter(x=>x.id!==id);persist();renderAll();renderFamiliarSettings();}}
