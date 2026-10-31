@@ -1,0 +1,45 @@
+/* Let flex/grid children shrink to the device width; wide tables scroll inside their own wrapper. */
+html{overflow-y:scroll;scrollbar-gutter:stable}
+.main-area,.page,.overview-grid,.overview-grid>*,.settings-grid>*,.history-summary>*,.mini-stats>*,.panel,.panel-top>*,.table-wrap{min-width:0}
+.table-wrap{width:100%;max-width:100%}
+.market-chart,.index-indicators,.index-indicators section{min-width:0;max-width:100%}
+.market-chart svg,.index-indicators svg{max-width:100%}
+@media(max-width:850px){.overview-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:640px){
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+  .app-shell,.main-area{min-width:0;max-width:100%}
+  .main-area{width:100%;padding-left:12px;padding-right:12px}
+  .page,.panel,.familiar-holding,.rb-stock{overflow-wrap:anywhere}
+  .settings-grid,.form-grid,.familiar-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .settings-grid{grid-template-columns:minmax(0,1fr)}
+  .familiar-step label,.familiar-fields label,.index-advice label{min-width:0}
+  .index-advice select{width:100%;min-width:0}
+  .panel-top{flex-wrap:wrap}
+  .panel-top .subtle-pill{white-space:normal}
+  .index-range,.market-chart-toolbar{flex-wrap:wrap}
+  .familiar-switch{flex-wrap:wrap}
+  .settings-save-row,.data-actions{flex-wrap:wrap}
+  .overview-table-panel{padding:14px 10px}
+  .overview-table-panel>.table-wrap{overflow-x:visible}
+  .overview-table-panel table{table-layout:fixed;width:100%;white-space:normal}
+  .overview-table-panel :is(th,td){padding:11px 3px;overflow-wrap:anywhere;vertical-align:middle;font-variant-numeric:tabular-nums}
+  .overview-table-panel th{font-size:9px;line-height:1.5}
+  .overview-table-panel td{font-size:10px;line-height:1.6}
+  .overview-table-panel :is(th,td):nth-child(1){width:24%}
+  .overview-table-panel :is(th,td):nth-child(2){width:11%}
+  .overview-table-panel :is(th,td):nth-child(3){width:17%}
+  .overview-table-panel :is(th,td):nth-child(4){width:22%}
+  .overview-table-panel :is(th,td):nth-child(5){width:10%}
+  .overview-table-panel :is(th,td):nth-child(6){width:16%}
+  .overview-table-panel .asset-avatar{display:none}
+  .overview-table-panel .asset-cell{display:block;min-width:0}
+  .overview-table-panel .asset-name :is(strong,small){font-size:10px;white-space:normal;overflow-wrap:anywhere}
+  .overview-table-panel .tag{padding:3px 2px;font-size:9px;white-space:normal}
+  .overview-table-panel .empty-cell{width:auto!important;padding:22px 8px}
+  .overview-holding-tools{width:100%;max-width:100%}
+  .overview-holding-tools .search-input{min-width:0;width:100%}
+  /* iOS otherwise zooms the viewport when focusing inputs smaller than 16px. */
+  .main-area :is(input:not([type=checkbox]):not([type=radio]),select,textarea),.modal :is(input:not([type=checkbox]):not([type=radio]),select,textarea){font-size:16px}
+  .mobile-nav{height:calc(65px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom)}
+  .main-area{padding-bottom:calc(85px + env(safe-area-inset-bottom))}
+}
