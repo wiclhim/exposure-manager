@@ -1,27 +1,7 @@
 'use strict';
 const legacy=require('./risk-engine');
 const MODELS=[{id:'constant',name:'固定 Beta 1.30'},{id:'legacy',name:'原始 KD／RSI／MACD 防守版'},{id:'trend',name:'MA60／MA200 趨勢版'},{id:'recovery',name:'趨勢防守＋低檔轉強回補'}];
-function signals(candles){
-  const rows=legacy.calculate(candles),closes=rows.map(r=>r.close);let priorRaw=0,stage=0,improving=0;
-  return rows.map((r,i)=>{
-    const average=n=>i>=n-1?closes.slice(i-n+1,i+1).reduce((a,b)=>a+b,0)/n:null;
-    const ma20=average(20),ma200=average(200),ma60Past=i>=64?closes.slice(i-64,i-4).reduce((a,b)=>a+b,0)/60:null;
-    let raw=0;const reasons=[];
-    if(r.close<r.ma60){raw=1;reasons.push('收盤低於 MA60');}
-    if(ma200&&r.close<ma200){raw=2;reasons.push('收盤低於 MA200');}
-    if(ma200&&r.close<ma200&&r.ma60<ma60Past){raw=3;reasons.push('低於 MA200 且 MA60 下彎');}
-    if(r.drawdown<=-20){raw=3;reasons.push('近一年收盤回檔超過 20%');}
-    if(i>=199){if(raw>stage){if(priorRaw>=raw)stage=raw;improving=0;}else if(raw<stage){improving++;if(improving>=3){stage--;improving=0;}}else improving=0;}
-    priorRaw=raw;
-    const p=rows[i-1],p2=rows[i-2];
-    const lowCross=!!(p&&p.k<=p.d&&r.k>r.d&&Math.min(p.k,p.d)<30);
-    const repair=!!(p&&p2&&r.k>r.d&&r.k>p.k&&r.rsi>p.rsi&&r.histogram>p.histogram&&p.histogram>p2.histogram&&r.close>ma20);
-    const multipliers=[1,.85,.65,.5];
-    // A rebound may restore one level, but never more than the baseline and never during a deep drawdown.
-    const recoveryLevel=repair&&r.drawdown>-20?Math.max(0,stage-1):stage;
-    return {...r,ma20,ma200,ma60Past,trendStage:stage,recoveryStage:recoveryLevel,trendReasons:reasons,lowCross,repair,studyReady:i>=199,targets:{constant:1,legacy:multipliers[r.stage??0],trend:multipliers[stage],recovery:multipliers[recoveryLevel]}};
-  });
-}
+function signals(candles){return require('./risk-policy').decorate(legacy.calculate(candles));}
 function clean(data){return new Map(data.filter(r=>r.date&&Number(r.close)>0).map(r=>[r.date,Number(r.close)]));}
 function align(index,core,lever){const a=clean(core),b=clean(lever);return signals(index).filter(r=>a.has(r.date)&&b.has(r.date)).map(r=>({...r,core:a.get(r.date),lever:b.get(r.date)}));}
 function simulate(rows,id,start,end,baseline=1.3,costScale=1){
