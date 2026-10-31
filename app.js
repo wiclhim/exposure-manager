@@ -1066,9 +1066,6 @@
   function init() {
     initCashEditor(); initFamiliarSettings(); bindEvents(); renderAll(); renderSettings();
     checkApiStatus();
-    if ('serviceWorker' in navigator && location.protocol.startsWith('https')) {
-      // No service worker is required; keeping app data browser-local avoids stale quote caching.
-    }
   }
   window.exposureRiskBridge={getTarget:()=>Number(state.settings.targetBeta),setTarget:value=>{if(!Number.isFinite(value)||value<0||value>5)return;saveFamiliarValue('targetBeta',value);renderSettings();notify('已更新目標 Beta，請至再平衡頁確認調整。');}};
   init();

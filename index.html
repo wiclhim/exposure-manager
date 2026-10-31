@@ -4,6 +4,12 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="theme-color" content="#101827" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="exposure-manager" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/app-192.png" />
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="/install.css" />
   <title>exposure-manager｜曝險管理</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -42,6 +48,7 @@
         <div class="topbar-actions"><div class="market-status"><span class="status-dot" id="marketDot"></span><span id="marketStatusText">行情來源尚未設定</span></div><button class="icon-button" id="refreshAllBtn" title="更新行情">⟳</button><button class="primary-button" id="quickAddBtn">＋ 新增持股</button></div>
       </header>
 
+      <aside class="install-strip" id="installStrip" aria-label="安裝應用程式"><span>放到桌面，以獨立視窗開啟</span><button type="button" class="secondary-button" id="installAppBtn">安裝桌面 App</button></aside>
       <section class="page active" id="page-overview">
         <div class="overview-grid">
           <article class="panel beta-panel">
@@ -116,6 +123,8 @@
 
   <div class="modal-backdrop" id="swapModal" aria-hidden="true"><div class="modal swap-modal"><div class="modal-head"><div><div class="section-label">SECURITY SWITCH</div><h2>再平衡標的互換</h2></div><button class="modal-close" data-close="swapModal">×</button></div><form id="swapForm"><label>欲替換的原持倉<select id="swapFrom" required></select></label><div class="swap-arrow">↓ 替換為 ↓</div><div class="form-grid"><label>新標的代號<input id="swapSymbol" required maxlength="12" placeholder="例如 00631L" /></label><label>新標的名稱<input id="swapName" placeholder="例如 元大台灣50正2" /></label><label>新標的 Beta<input id="swapBeta" type="number" min="-5" max="10" step="0.05" value="2" required /></label><label>新標的目前價格<input id="swapPrice" type="number" min="0" step="0.01" value="0" required /></label></div><button type="button" class="secondary-button small" id="fetchSwapQuoteBtn">↻ 取得新標的報價</button><div class="field-note" id="swapQuoteStamp">尚未取得新標的報價</div><div class="swap-mode"><div class="field-caption">互換計算方式</div><label class="radio-card"><input type="radio" name="swapMode" value="value" checked /><span><strong>保留原持倉市值</strong><small>換入後的市值與原持倉接近</small></span></label><label class="radio-card"><input type="radio" name="swapMode" value="beta" /><span><strong>保留原 Beta 曝險金額</strong><small>讓換入後的 Beta × 市值與原持倉相同</small></span></label></div><div class="swap-preview" id="swapPreview"><span>輸入標的與價格後，這裡會顯示互換結果。</span></div><div class="modal-note">此功能只修改本工具中的持倉模型，不會實際賣出或買進。若新標的已在持倉中，系統會合併數量並以新標的目前價格估算合併成本。</div><div class="modal-actions"><span></span><button type="button" class="secondary-button" data-close="swapModal">取消</button><button type="submit" class="primary-button">確認互換標的</button></div></form></div></div>
   <div class="toast" id="toast" role="status"></div>
+  <dialog id="installHelp" class="install-help" aria-labelledby="installHelpTitle"><h2 id="installHelpTitle">安裝 exposure-manager</h2><p id="installHelpStatus" role="status">請使用 Chrome 或 Edge 開啟此網站。</p><ol><li>在網址列右側按「安裝」圖示；若沒有出現，開啟瀏覽器選單，尋找「安裝 exposure-manager」或「將這個網站安裝為應用程式」。</li><li>確認安裝後，從桌面或開始功能表開啟。可在瀏覽器的 App 管理中建立桌面捷徑。</li></ol><p>iPhone／iPad：在 Safari 分享選單選「加入主畫面」，並啟用「作為網頁 App 開啟」（若有此選項）。</p><p>請使用原本存有持倉的瀏覽器與使用者設定檔安裝。其他瀏覽器或裝置可用「設定 → 匯出完整備份／匯入備份 JSON」還原資料。行情需要網路連線。</p><button type="button" class="primary-button" id="closeInstallHelp">知道了</button></dialog>
+  <script src="/install.js"></script>
   <script src="/app.js"></script>
   <script src="/risk-engine.js"></script>
   <script src="/risk-policy.js"></script>
