@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const panel=document.createElement('article');panel.className='panel strategy-report';
+  const panel=document.createElement('article');panel.className='panel strategy-report';panel.style.gridColumn='1 / -1';
   panel.innerHTML='<div class="section-label">BETA EXECUTION COMPARISON</div><h2>Beta 調整速度：快降與緩調比較</h2><div id="executionReportBody">載入比較結果…</div>';
   document.querySelector('.index-signals-panel').after(panel);
   const pct=n=>(n*100).toFixed(2)+'%',esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
