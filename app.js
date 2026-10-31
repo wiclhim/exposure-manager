@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const STORE_KEY = 'betreeExposureManager.v1';
+  const STORE_KEY = 'exposureManager.v1';
   const defaults = {
     holdings: [], cash: 0, history: [], quoteCache: {}, marketHistory: null,
     settings: { targetBeta: 1, tolerance: 10, target: { lever: 20, core: 60, cash: 20 }, refreshSeconds: 60, benchmark: '0050' }
@@ -20,7 +20,7 @@
   const quoteRequestsInFlight = new Map();
   let lastRateLimitNoticeAt = 0;
   let apiRateUsage = { configured:false, used:null, limit:40, remaining:null };
-  const WS_KEY_STORE = 'betreeFugleWsKey.v1';
+  const WS_KEY_STORE = 'exposureFugleWsKey.v1';
   let toastTimer = null;
   let currentPage = 'overview';
   let marketRangeMonths = 1;
@@ -499,7 +499,7 @@
 
     if (navigator.locks?.request) {
       if (wsLockTask) return;
-      wsLockTask = navigator.locks.request('betree-fugle-single-websocket', {mode:'exclusive', ifAvailable:true}, async lock => {
+      wsLockTask = navigator.locks.request('exposure-fugle-single-websocket', {mode:'exclusive', ifAvailable:true}, async lock => {
         if (!lock) {
           $('wsStateText').textContent = '另一個分頁已占用 Fugle 唯一 WebSocket 連線；本分頁改用 REST，稍後再檢查。';
           if (wsShouldRun) wsRetryTimer = setTimeout(connectFugleWebSocket, 10000);
@@ -681,14 +681,14 @@
   }
   function exportHoldings() {
     const rows=[['代號','名稱','分類','數量','成本均價','目前價格','市值','Beta','報價時間'],...state.holdings.map(h=>[h.symbol,h.name,categoryName(h.category),h.quantity,h.cost,priceOf(h),marketValue(h),h.beta,fmtTime(h.quote?.quoteTime||h.quote?.lastUpdated)])];
-    csvDownload(`betree-holdings-${today()}.csv`,rows);
+    csvDownload(`exposure-manager-holdings-${today()}.csv`,rows);
   }
   function exportHistory() {
     const rows=[['日期','總資產','整體Beta','槓桿比例%','原形比例%','現金比例%'],...state.history.sort((a,b)=>a.date.localeCompare(b.date)).map(x=>[x.date,x.total,x.beta,x.leverPct,x.corePct,x.cashPct])];
-    csvDownload(`betree-history-${today()}.csv`,rows);
+    csvDownload(`exposure-manager-history-${today()}.csv`,rows);
   }
   function backupData() {
-    const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`betree-backup-${today()}.json`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);notify('備份檔已下載');
+    const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`exposure-manager-backup-${today()}.json`;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);notify('備份檔已下載');
   }
   async function restoreData(file) {
     try{const data=JSON.parse(await file.text());if(!data||!Array.isArray(data.holdings)||!data.settings)throw new Error('備份檔格式不正確');
@@ -994,7 +994,7 @@
     }
     syncModelTargets();persist();renderAll();
     $('settingsSaveStatus').textContent='已自動儲存';
-    if(key==='targetBeta')window.dispatchEvent(new Event('betree-target-changed'));
+    if(key==='targetBeta')window.dispatchEvent(new Event('exposure-target-changed'));
     return true;
   }
   async function refreshFx() {
@@ -1070,6 +1070,6 @@
       // No service worker is required; keeping app data browser-local avoids stale quote caching.
     }
   }
-  window.betreeRiskBridge={getTarget:()=>Number(state.settings.targetBeta),setTarget:value=>{if(!Number.isFinite(value)||value<0||value>5)return;saveFamiliarValue('targetBeta',value);renderSettings();notify('已更新目標 Beta，請至再平衡頁確認調整。');}};
+  window.exposureRiskBridge={getTarget:()=>Number(state.settings.targetBeta),setTarget:value=>{if(!Number.isFinite(value)||value<0||value>5)return;saveFamiliarValue('targetBeta',value);renderSettings();notify('已更新目標 Beta，請至再平衡頁確認調整。');}};
   init();
 })();

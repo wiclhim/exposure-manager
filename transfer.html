@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>exposure-manager｜舊資料轉移</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;padding:24px;background:#f5f3ef;color:#343a37;font:16px/1.8 system-ui,sans-serif}main{max-width:640px;margin:8vh auto;background:#fff;padding:28px;border:1px solid #dfddd6;border-radius:20px}h1{font-size:25px;line-height:1.4}p{overflow-wrap:anywhere}button,a.action{display:inline-block;font:inherit;background:#677e70;color:#fff;border:0;border-radius:12px;padding:12px 18px;cursor:pointer;text-decoration:none;margin:8px 6px 8px 0}button:disabled{opacity:.5;cursor:default}a{color:#4f6c5a}.note{color:#6a706a;font-size:14px}#transferStatus{white-space:pre-line}#transferPreview{padding:14px;background:#f5f3ef;border-radius:12px}label{display:flex;gap:10px;align-items:start}input{margin-top:8px} [hidden]{display:none!important}@media(max-width:440px){body{padding:12px}main{padding:20px;margin:24px auto}}
+  </style>
+</head>
+<body>
+  <main>
+    <p class="note">EXPOSURE-MANAGER</p>
+    <h1>將舊資料轉到新網址</h1>
+    <p id="transferStatus" role="status">正在讀取轉移資訊…</p>
+    <p id="transferPreview" hidden></p>
+    <label id="transferConsent" hidden><input id="transferOverwrite" type="checkbox"><span>我確認以這份舊資料取代新網址目前的持倉與設定。新網址原有資料會先保留一份本機備份。</span></label>
+    <button id="transferSend" hidden>複製資料到新網站</button>
+    <button id="transferImport" hidden disabled>確認匯入</button>
+    <a id="transferStart" class="action" hidden>開啟原本瀏覽器的舊資料</a>
+    <a id="transferHome" href="/">返回網站</a>
+    <button id="transferBackup" hidden>下載轉移前的投組備份</button>
+    <p class="note">只複製目前瀏覽器中的持倉、現金、設定、歷史與指數策略設定，資料不經伺服器，也不放進網址。舊資料會保留。WebSocket Key 請到新網站重新輸入。</p>
+    <p class="note">若新視窗被阻擋，請允許這次開啟；也可回舊網站「設定 → 匯出完整備份」，到新網站匯入 JSON。手機與電腦需各自轉移。</p>
+  </main>
+  <script src="/storage-compat.js"></script>
+  <script src="/site-migration.js"></script>
+</body>
+</html>

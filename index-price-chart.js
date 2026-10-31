@@ -16,5 +16,5 @@ const low=last.k<20&&last.d<20,golden=previous.k<=previous.d&&last.k>last.d&&Mat
 document.getElementById('indexKdContext').textContent=golden?'KD 低檔黃金交叉：可列回補觀察，但單日交叉仍可能失敗，請等 RSI 與 MACD 改善及多日確認。':low?'KD 低檔：可能超賣，也可能弱勢鈍化；低數值本身不是提高 Beta 的充分條件。':recover?'短線修復觀察：K 在 D 上方且上升、RSI 回升、MACD 柱改善；依原規則確認後逐步恢復至基準 Beta 1.30，不因單日訊號追高。':'KD 與趨勢需一起判讀；目前尚未同時符合 K 上升且高於 D、RSI 回升、MACD 柱改善的短線修復條件。';
 }
 panel.addEventListener('click',e=>{const b=e.target.closest('[data-months]');if(b){months=Number(b.dataset.months);render();}});
-window.addEventListener('betree-index-data',e=>{all=e.detail;render();});
+window.addEventListener('exposure-index-data',e=>{all=e.detail;render();});
 })();
