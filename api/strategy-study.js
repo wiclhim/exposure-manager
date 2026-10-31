@@ -16,6 +16,6 @@ module.exports=async(req,res)=>{
       const body=await response.json();if(!response.ok)throw new Error(`${symbol} ${window.from}: ${body.message||response.status}`);return body.data||[];
     }));result[symbol]=chunks.flat();}
     const report=study(result.IX0001,result['0050'],result['00631L']);
-    res.setHeader('Cache-Control','s-maxage=86400, stale-while-revalidate=3600');res.status(200).json({...report,generatedAt:new Date().toISOString(),source:'Fugle 歷史還原日 K'});
+    res.setHeader('Cache-Control','s-maxage=86400, stale-while-revalidate=3600');res.status(200).json({...report,dataset:result,generatedAt:new Date().toISOString(),source:'Fugle 歷史還原日 K'});
   }catch(e){res.status(502).json({error:e.message});}
 };
