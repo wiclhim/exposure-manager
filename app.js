@@ -994,6 +994,7 @@
     }
     syncModelTargets();persist();renderAll();
     $('settingsSaveStatus').textContent='已自動儲存';
+    if(key==='targetBeta')window.dispatchEvent(new Event('betree-target-changed'));
     return true;
   }
   async function refreshFx() {
