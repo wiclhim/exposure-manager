@@ -1069,5 +1069,6 @@
       // No service worker is required; keeping app data browser-local avoids stale quote caching.
     }
   }
+  window.betreeRiskBridge={getTarget:()=>Number(state.settings.targetBeta),setTarget:value=>{if(!Number.isFinite(value)||value<0||value>5)return;saveFamiliarValue('targetBeta',value);renderSettings();notify('已更新目標 Beta，請至再平衡頁確認調整。');}};
   init();
 })();

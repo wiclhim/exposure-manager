@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="/rebalance-display.css" />
   <link rel="stylesheet" href="/rebalance-display-final.css" />
   <link rel="stylesheet" href="/page-colors.css" />
+  <link rel="stylesheet" href="/index-signals.css" />
 </head>
 <body>
   <div class="app-shell">
@@ -115,5 +116,7 @@
   <div class="modal-backdrop" id="swapModal" aria-hidden="true"><div class="modal swap-modal"><div class="modal-head"><div><div class="section-label">SECURITY SWITCH</div><h2>再平衡標的互換</h2></div><button class="modal-close" data-close="swapModal">×</button></div><form id="swapForm"><label>欲替換的原持倉<select id="swapFrom" required></select></label><div class="swap-arrow">↓ 替換為 ↓</div><div class="form-grid"><label>新標的代號<input id="swapSymbol" required maxlength="12" placeholder="例如 00631L" /></label><label>新標的名稱<input id="swapName" placeholder="例如 元大台灣50正2" /></label><label>新標的 Beta<input id="swapBeta" type="number" min="-5" max="10" step="0.05" value="2" required /></label><label>新標的目前價格<input id="swapPrice" type="number" min="0" step="0.01" value="0" required /></label></div><button type="button" class="secondary-button small" id="fetchSwapQuoteBtn">↻ 取得新標的報價</button><div class="field-note" id="swapQuoteStamp">尚未取得新標的報價</div><div class="swap-mode"><div class="field-caption">互換計算方式</div><label class="radio-card"><input type="radio" name="swapMode" value="value" checked /><span><strong>保留原持倉市值</strong><small>換入後的市值與原持倉接近</small></span></label><label class="radio-card"><input type="radio" name="swapMode" value="beta" /><span><strong>保留原 Beta 曝險金額</strong><small>讓換入後的 Beta × 市值與原持倉相同</small></span></label></div><div class="swap-preview" id="swapPreview"><span>輸入標的與價格後，這裡會顯示互換結果。</span></div><div class="modal-note">此功能只修改本工具中的持倉模型，不會實際賣出或買進。若新標的已在持倉中，系統會合併數量並以新標的目前價格估算合併成本。</div><div class="modal-actions"><span></span><button type="button" class="secondary-button" data-close="swapModal">取消</button><button type="submit" class="primary-button">確認互換標的</button></div></form></div></div>
   <div class="toast" id="toast" role="status"></div>
   <script src="/app.js"></script>
+  <script src="/risk-engine.js"></script>
+  <script src="/index-signals-ui.js"></script>
 </body>
 </html>
