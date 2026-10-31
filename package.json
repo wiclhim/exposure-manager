@@ -3,6 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "description": "Portfolio beta exposure and rebalancing dashboard with Taiwan real-time quote adapter",
-  "scripts": { "start": "vercel dev", "test": "node test/strategy-study.test.js && node test/pwa.test.js && node test/rebalance.test.js" },
+  "scripts": { "start": "vercel dev", "test": "node test/strategy-study.test.js && node test/pwa.test.js && node test/rebalance.test.js && node test/execution-policy.test.js" },
   "engines": { "node": ">=20" }
 }

@@ -22,14 +22,19 @@ function decorate(input){
   });
 }
 
-function recommendation(rows,baseline,current,model='recovery'){
+function executionStep(current,ceiling,execution='gradual',daysSinceApplied=Infinity){
+ const direction=current>ceiling+.005?'decrease':current<ceiling-.005?'increase':'hold';
+ const next=Math.round((direction==='decrease'?(execution==='fastDown'?ceiling:Math.max(ceiling,current-.1)):direction==='increase'?Math.min(ceiling,current+.1):current)*100)/100;
+ const cooldown=daysSinceApplied===0||(daysSinceApplied<5&&!(execution==='fastDown'&&direction==='decrease'));
+ return {next,direction,cooldown,canApply:direction!=='hold'&&!cooldown,execution};
+}
+function recommendation(rows,baseline,current,model='recovery',execution='gradual',daysSinceApplied=Infinity){
  const data=rows.at(-1)?.targets?rows:decorate(rows),last=data.at(-1);
  if(!last?.studyReady)throw new Error('MA200 暖機資料不足，暫不產生建議');
  const multiplier=last.targets[model]??last.targets.recovery;
  const stage=model==='legacy'?last.stage:model==='trend'?last.trendStage:last.recoveryStage;
  const ceiling=Math.round(baseline*multiplier*100)/100;
- const next=Math.round((current>ceiling?Math.max(ceiling,current-.1):Math.min(ceiling,current+.1))*100)/100;
- return {stage,multiplier,ceiling,next,date:last.date,model,repair:last.repair,reasons:model==='legacy'?last.reasons:last.trendReasons};
+ return {stage,multiplier,ceiling,...executionStep(current,ceiling,execution,daysSinceApplied),date:last.date,model,repair:last.repair,reasons:model==='legacy'?last.reasons:last.trendReasons};
 }
-return {decorate,recommendation};
+return {decorate,recommendation,executionStep};
 });
