@@ -167,7 +167,7 @@
     if (!visible.length) body.innerHTML = `<tr><td colspan="6" class="empty-cell">${search?'找不到符合的持股。':'尚未新增持股，請至「設定 → 持股」輸入資料。'}</td></tr>`;
     else body.innerHTML = visible.map(h => {
       const q = h.quote || state.quoteCache[h.symbol];
-      return `<tr><td><div class="asset-cell"><div class="asset-avatar">${escapeHtml(String(h.symbol).slice(0,4))}</div><div class="asset-name"><strong>${escapeHtml(h.name || h.symbol)}</strong><small>${escapeHtml(h.symbol)}</small></div></div></td><td><span class="tag ${categoryClass(h.category)}">${categoryName(h.category)}</span></td><td class="right">${priceOf(h) ? money2(priceOf(h)) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${betaFmt(h.beta)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td></tr>`;
+      return `<tr><td><div class="asset-cell"><div class="asset-avatar">${escapeHtml(String(h.symbol).slice(0,4))}</div><div class="asset-name"><strong>${escapeHtml(h.name || h.symbol)}</strong><small>${escapeHtml(h.symbol)}</small></div></div></td><td><span class="tag ${categoryClass(h.category)}">${categoryName(h.category)}</span></td><td class="right">${priceOf(h) ? money2(priceOf(h)) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${number(h.quantity)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td></tr>`;
     }).join('');
     renderMarketCard();
   }

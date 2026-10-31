@@ -25,12 +25,12 @@ html{overflow-y:scroll;scrollbar-gutter:stable}
   .overview-table-panel :is(th,td){padding:11px 3px;overflow-wrap:anywhere;vertical-align:middle;font-variant-numeric:tabular-nums}
   .overview-table-panel th{font-size:9px;line-height:1.5}
   .overview-table-panel td{font-size:10px;line-height:1.6}
-  .overview-table-panel :is(th,td):nth-child(1){width:24%}
-  .overview-table-panel :is(th,td):nth-child(2){width:11%}
+  .overview-table-panel :is(th,td):nth-child(1){width:23%}
+  .overview-table-panel :is(th,td):nth-child(2){width:10%}
   .overview-table-panel :is(th,td):nth-child(3){width:17%}
   .overview-table-panel :is(th,td):nth-child(4){width:22%}
-  .overview-table-panel :is(th,td):nth-child(5){width:10%}
-  .overview-table-panel :is(th,td):nth-child(6){width:16%}
+  .overview-table-panel :is(th,td):nth-child(5){width:14%}
+  .overview-table-panel :is(th,td):nth-child(6){width:14%}
   .overview-table-panel .asset-avatar{display:none}
   .overview-table-panel .asset-cell{display:block;min-width:0}
   .overview-table-panel .asset-name :is(strong,small){font-size:10px;white-space:normal;overflow-wrap:anywhere}
