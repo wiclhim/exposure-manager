@@ -29,7 +29,7 @@ function simulate(rows,id,start,end,baseline=1.3,costScale=1){
   for(let i=start;i<end;i++){
     const r=rows[i],p=rows[i-1];if(i>start){core*=r.core/p.core;lever*=r.lever/p.lever;nav=core+lever+cash;}
     // A signal from yesterday's completed candle is executed at today's close; it earns returns only tomorrow.
-    const desired=baseline*p.targets[id],request=id==='constant'?baseline:Math.round((beta>desired?Math.max(desired,beta-.1):Math.min(desired,beta+.1))*100)/100;
+    const desired=baseline*p.targets[id],request=i===start||id==='constant'?baseline:Math.round((beta>desired?Math.max(desired,beta-.1):Math.min(desired,beta+.1))*100)/100;
     if(i-lastTrade>=5 && (i===start||Math.abs((core+2*lever)/nav-request)>=.05)){
       const wl=Math.max(0,request-1),wc=Math.min(1,request),wcore=request>1?1-wl:wc,wcash=Math.max(0,1-wl-wcore);
       const dc=nav*wcore-core,dl=nav*wl-lever;
