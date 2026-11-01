@@ -1,5 +1,5 @@
 const {reserveFugleCalls,rateLimitResponse}=require('../lib/fugle-rate-limit');
-const {study,compareExecution}=require('../strategy-study-engine');
+const {study,compareExecution,compareOverheat}=require('../strategy-study-engine');
 module.exports=async(req,res)=>{
   if(req.method!=='GET')return res.status(405).json({error:'Method not allowed'});
   if(!process.env.FUGLE_API_KEY)return res.status(503).json({error:'Fugle API 尚未設定'});
@@ -17,6 +17,7 @@ module.exports=async(req,res)=>{
     }));result[symbol]=chunks.flat();}
     const report=study(result.IX0001,result['0050'],result['00631L']);
     const executionComparison=compareExecution(result.IX0001,result['0050'],result['00631L']);
-    res.setHeader('Cache-Control','s-maxage=86400, stale-while-revalidate=3600');res.status(200).json({...report,executionComparison,...(req.query?.dataset==='1'?{dataset:result}:{}),generatedAt:new Date().toISOString(),source:'Fugle 歷史還原日 K'});
+    const overheatComparison=compareOverheat(result.IX0001,result['0050'],result['00631L']);
+    res.setHeader('Cache-Control','s-maxage=86400, stale-while-revalidate=3600');res.status(200).json({...report,executionComparison,overheatComparison,...(req.query?.dataset==='1'?{dataset:result}:{}),generatedAt:new Date().toISOString(),source:'Fugle 歷史還原日 K'});
   }catch(e){res.status(502).json({error:e.message});}
 };

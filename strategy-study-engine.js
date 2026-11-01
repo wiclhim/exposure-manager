@@ -27,7 +27,16 @@ function simulate(rows,id,start,end,baseline=1.3,costScale=1,execution='gradual'
   const days=(Date.parse(rows[end-1].date)-Date.parse(rows[start].date))/86400000;
   const cagr=days>0?Math.pow(nav,365.25/days)-1:0;
   const fullMonths=[...months.values()].slice(1,-1);const positive=fullMonths.filter(m=>m.last>m.first).length;
-  return {id,name:MODELS.find(m=>m.id===id).name,execution,initialBeta,from:rows[start].date,to:rows[end-1].date,totalReturn:nav-1,cagr,maxDrawdown,calmar:cagr/Math.max(.01,maxDrawdown),positiveMonths:positive,monthCount:fullMonths.length,positiveMonthRate:fullMonths.length?positive/fullMonths.length:null,rebalances:trades,costPerInitialCapital:costs,turnover,curve,tradeLog};
+  return {id,name:id==='recoveryHeat'?'趨勢修復＋高檔轉弱防守':MODELS.find(m=>m.id===id).name,execution,initialBeta,from:rows[start].date,to:rows[end-1].date,totalReturn:nav-1,cagr,maxDrawdown,calmar:cagr/Math.max(.01,maxDrawdown),positiveMonths:positive,monthCount:fullMonths.length,positiveMonthRate:fullMonths.length?positive/fullMonths.length:null,rebalances:trades,costPerInitialCapital:costs,turnover,curve,tradeLog};
+}
+function compareOverheat(index,core,lever){
+ const rows=align(index,core,lever),start=rows.findIndex((r,i)=>i>0&&rows[i-1].studyReady),end=rows.length;
+ if(start<0||end-start<500)throw new Error('共同有效資料不足');
+ const split=start+Math.floor((end-start)*.6);
+ const run=(from,to,cost=1)=>['gradual','fastDown'].flatMap(execution=>['recovery','recoveryHeat'].map(id=>simulate(rows,id,from,to,1.3,cost,execution)));
+ return {policyVersion:require('./risk-policy').POLICY_VERSION,baseline:1.3,train:run(start,split),test:run(split,end),stress:run(split,end,2),observations:end-start,splitDate:rows[split].date,asOf:rows.at(-1).date,
+ methodology:'門檻於計算前固定，沒有搜尋或重選參數。同一批加權指數／0050／00631L 日 K、基準 1.30、同初始配置、同成本；前 60% 與後 40% 分開比較，另列雙倍成本。昨日訊號、今日收盤執行、隔日起計損益。雙向分段與快降方式分別比較。',
+ limitations:'使用已看過的歷史資料，屬回溯開發檢查，並非全新盲測；新防守規則按需求啟用，不代表通過報酬或回撤勝出門檻。可能提前減碼而錯過強勢行情，亦不能保證降低最大回撤。採分數股與 Beta 1／2 的 ETF 配置近似，非使用者真實持倉績效；未計現金利息、個人稅負與整股限制。'};
 }
 function compareExecution(index,core,lever){
  const rows=align(index,core,lever),start=rows.findIndex((r,i)=>i>0&&rows[i-1].studyReady),end=rows.length;
@@ -57,4 +66,4 @@ function study(index,core,lever){
   const passed=validation.cagr>0&&validation.maxDrawdown<=reference.maxDrawdown&&validation.calmar>=reference.calmar;
   return {baseline:1.3,selectionRule:'先取訓練期年化報酬正值且最大回撤至少比固定 Beta 減少 15% 的候選，再選 Calmar 較高者；無候選時以低檔修復版作觀察，不視為勝出。',trainingQualified:candidates.length>0,selectedId:selected.id,validationPassed:passed,train,test,stress:MODELS.map(m=>simulate(rows,m.id,split,end,1.3,2)),latest:rows.at(-1),observations:end-start,splitDate:rows[split].date,firstDate:rows[0].date,signalLag:'昨日訊號、今日收盤執行、明日起計損益；至少相隔 5 個交易日調整，每次 Beta 最多 0.1。',costs:'買入 0.1925%、賣出 0.2925%（手續費 0.1425%、賣出 ETF 稅 0.1%、單邊滑價 0.05%）；現金利息 0。成本以交易前 NAV 估算。',limitations:'0050／00631L 還原日收盤的近似投組；不是實際持股績效、不是券商成交回測。未計整股取整、現金股利稅及匯率，還原價以資料商定義為準。後段雖未用來挑規則，仍屬歷史驗證，未來可能失效。'};
 }
-module.exports={MODELS,signals,align,simulate,study,compareExecution};
+module.exports={MODELS,signals,align,simulate,study,compareExecution,compareOverheat};
