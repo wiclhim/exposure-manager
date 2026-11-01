@@ -1,5 +1,5 @@
-(()=>{'use strict';const panel=document.createElement('article');panel.className='panel strategy-report';panel.innerHTML='<div class="section-label">HISTORICAL COMPARISON · NOT A FORECAST</div><h2>策略驗證：報酬與回撤一起看</h2><div id="strategyReportBody">載入已驗證回測摘要…</div>';
-document.querySelector('.index-signals-panel').after(panel);
+(()=>{'use strict';const panel=document.createElement('details');panel.id='betaStrategyHistory';panel.className='strategy-report beta-history-report';panel.innerHTML='<summary>舊版策略驗證（未含高檔防守）</summary><div id="strategyReportBody">載入已驗證回測摘要…</div>';
+document.getElementById('betaHistoryReports').append(panel);
 const pct=v=>v==null?'—':`${(v*100).toFixed(2)}%`,esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const table=rows=>'<div class="table-wrap"><table><thead><tr><th>規則</th><th>累積報酬</th><th>年化報酬</th><th>最大回撤</th><th>Calmar</th><th>正報酬月份</th><th>調整次數</th></tr></thead><tbody>'+rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${pct(r.totalReturn)}</td><td>${pct(r.cagr)}</td><td>−${pct(r.maxDrawdown)}</td><td>${r.calmar.toFixed(2)}</td><td>${r.positiveMonths}/${r.monthCount} (${pct(r.positiveMonthRate)})</td><td>${r.rebalances}</td></tr>`).join('')+'</tbody></table></div>';
 fetch('/strategy-report.json').then(r=>{if(!r.ok)throw new Error();return r.json();}).then(r=>{

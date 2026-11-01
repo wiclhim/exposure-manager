@@ -1,8 +1,8 @@
 (() => {
   'use strict';
-  const panel=document.createElement('article');panel.className='panel strategy-report';panel.style.gridColumn='1 / -1';
-  panel.innerHTML='<div class="section-label">BETA EXECUTION COMPARISON</div><h2>Beta 調整速度：快降與緩調比較</h2><div id="executionReportBody">載入比較結果…</div>';
-  document.querySelector('.index-signals-panel').after(panel);
+  const panel=document.createElement('details');panel.id='betaExecutionHistory';panel.className='strategy-report beta-history-report';
+  panel.innerHTML='<summary>調整速度比較（未含高檔防守）</summary><div id="executionReportBody">載入比較結果…</div>';
+  document.getElementById('betaHistoryReports').append(panel);
   const pct=n=>(n*100).toFixed(2)+'%',esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const table=rows=>'<div class="table-wrap"><table><thead><tr><th>調整方式</th><th>年化報酬</th><th>最大回撤</th><th>調整次數</th><th>成本／初始本金</th></tr></thead><tbody>'+rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${pct(r.cagr)}</td><td>−${pct(r.maxDrawdown)}</td><td>${r.rebalances}</td><td>${pct(r.costPerInitialCapital)}</td></tr>`).join('')+'</tbody></table></div>';
   fetch('/execution-report.json').then(r=>{if(!r.ok)throw Error();return r.json();}).then(r=>{
