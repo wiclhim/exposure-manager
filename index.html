@@ -81,7 +81,7 @@
             <div class="market-foot"><span id="marketSourceText">資料來源：尚未連線</span><button class="text-button" id="marketRefreshBtn">更新市場水位 ↗</button></div>
           </article>
         </div>
-        <article class="panel table-panel overview-table-panel"><div class="panel-top"><div><div class="section-label">CURRENT POSITIONS</div><h2>持倉概況</h2><span class="helper-text" id="overviewHoldingsCount"></span></div><div class="table-tools overview-holding-tools"><input class="search-input" id="overviewHoldingSearch" type="search" aria-label="搜尋持股代號或名稱" placeholder="搜尋代號／名稱" /><button class="secondary-button small" id="overviewExportCsvBtn">匯出全部 CSV</button><button class="text-button" id="overviewManageHoldingsBtn">編輯持股 ↗</button></div></div><div class="table-wrap"><table><thead><tr><th>標的</th><th>分類</th><th class="right">目前價格</th><th class="right">持有市值</th><th class="right">持有股數</th><th class="right">投組權重</th></tr></thead><tbody id="overviewHoldingsBody"><tr><td colspan="6" class="empty-cell">尚未新增持股，請先輸入你的持倉資料。</td></tr></tbody></table></div></article>
+        <article class="panel table-panel overview-table-panel"><div class="panel-top"><div><div class="section-label">CURRENT POSITIONS</div><h2>持倉概況</h2><span class="helper-text" id="overviewHoldingsCount"></span></div><div class="table-tools overview-holding-tools"><input class="search-input" id="overviewHoldingSearch" type="search" aria-label="搜尋持股代號或名稱" placeholder="搜尋代號／名稱" /><button class="secondary-button small" id="overviewExportCsvBtn">匯出全部 CSV</button><button class="text-button" id="overviewManageHoldingsBtn">編輯持股 ↗</button></div></div><div class="table-wrap" tabindex="0" role="region" aria-label="持倉概況表格，可左右捲動"><table><colgroup><col class="holding-symbol-column"><col span="5"><col class="holding-peak-column"><col class="holding-gain-column"></colgroup><thead><tr><th>標的</th><th>分類</th><th class="right">目前價格</th><th class="right">持有市值</th><th class="right">持有股數</th><th class="right">投組權重</th><th class="right">52 週最高價</th><th class="right">回到高點需漲</th></tr></thead><tbody id="overviewHoldingsBody"><tr><td colspan="8" class="empty-cell">尚未新增持股，請先輸入你的持倉資料。</td></tr></tbody></table></div><p class="holding-high-note">可左右滑動查看完整欄位。52 週最高採還原日 K 的最高價；回到高點的漲幅以目前價格為基準。</p></article>
       </section>
 
       <section class="page" id="page-holdings">
@@ -128,6 +128,7 @@
   <div class="toast" id="toast" role="status"></div>
   <dialog id="installHelp" class="install-help" aria-labelledby="installHelpTitle"><h2 id="installHelpTitle">安裝 exposure-manager</h2><p id="installHelpStatus" role="status">請使用 Chrome 或 Edge 開啟此網站。</p><ol><li>在網址列右側按「安裝」圖示；若沒有出現，開啟瀏覽器選單，尋找「安裝 exposure-manager」或「將這個網站安裝為應用程式」。</li><li>確認安裝後，從桌面或開始功能表開啟。可在瀏覽器的 App 管理中建立桌面捷徑。</li></ol><p>iPhone／iPad：在 Safari 分享選單選「加入主畫面」，並啟用「作為網頁 App 開啟」（若有此選項）。</p><p>請使用原本存有持倉的瀏覽器與使用者設定檔安裝。其他瀏覽器或裝置可用「設定 → 匯出完整備份／匯入備份 JSON」還原資料。行情需要網路連線。</p><button type="button" class="primary-button" id="closeInstallHelp">知道了</button></dialog>
   <script src="/install.js"></script>
+  <script src="/market-quotes.js"></script>
   <script src="/app.js"></script>
   <script src="/risk-engine.js"></script>
   <script src="/risk-policy.js"></script>

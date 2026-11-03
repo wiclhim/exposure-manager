@@ -20,15 +20,16 @@ module.exports = async function handler(req, res) {
   try {
     const to = taipeiDate(new Date());
     const from = shiftDate(to, -364); // Fugle 歷史 K 單次查詢區間須小於一年
-    const params = new URLSearchParams({ from, to, timeframe: 'D', adjusted: 'true', fields: 'close' });
+    const params = new URLSearchParams({ from, to, timeframe: 'D', adjusted: 'true', fields: 'high,close' });
     const url = `https://api.fugle.tw/marketdata/v1.0/stock/historical/candles/${encodeURIComponent(symbol)}?${params}`;
     const upstream = await fetch(url, { headers: { 'X-API-KEY': key }, cache: 'no-store' });
     const body = await upstream.json().catch(() => ({}));
     if (!upstream.ok) return res.status(upstream.status).json({ error: body.message || body.error || `Fugle API error ${upstream.status}`, detail: body });
-    const data = Array.isArray(body.data) ? body.data.map(row => ({ date: row.date, close: Number(row.close) })).filter(row => row.close > 0) : [];
+    const data = Array.isArray(body.data) ? body.data.map(row => ({ date: row.date, close: Number(row.close), high: Number(row.high) })).filter(row => /^\d{4}-\d{2}-\d{2}$/.test(row.date) && row.date >= from && row.date <= to && Number.isFinite(row.close) && row.close > 0) : [];
     if (!data.length) return res.status(404).json({ error: `No historical data for ${symbol}` });
     const high = data.reduce((a, b) => b.close > a.close ? b : a, data[0]);
-    res.status(200).json({ symbol, from, to, highClose: high.close, highDate: high.date, data, source: 'Fugle historical candles', adjusted: true });
+    const highPrice = data.reduce((best,row)=>Number.isFinite(row.high)&&row.high>0&&(!best||row.high>best.high)?row:best,null);
+    res.status(200).json({ symbol, from, to, highClose: high.close, highDate: high.date, highPrice: highPrice?.high ?? null, highPriceDate: highPrice?.date ?? null, data, source: 'Fugle historical candles', adjusted: true });
   } catch (error) {
     res.status(502).json({ error: 'Unable to retrieve historical data', detail: error.message });
   }

@@ -4,6 +4,17 @@ html{overflow-y:scroll;scrollbar-gutter:stable}
 .table-wrap{width:100%;max-width:100%}
 .market-chart,.index-indicators,.index-indicators section{min-width:0;max-width:100%}
 .market-chart svg,.index-indicators svg{max-width:100%}
+.overview-table-panel>.table-wrap{overflow-x:auto;scrollbar-width:thin;scrollbar-color:#acb5a8 #edf0eb;padding-bottom:4px}
+.overview-table-panel table{min-width:850px;table-layout:fixed;white-space:nowrap}
+.overview-table-panel .holding-symbol-column{width:190px}
+.overview-table-panel .holding-peak-column{width:108px}
+.overview-table-panel .holding-gain-column{width:114px}
+.overview-table-panel :is(th,td){font-variant-numeric:tabular-nums}
+.overview-table-panel :is(th,td):first-child:not(.empty-cell){position:sticky;left:0;z-index:1;background:#fff;box-shadow:1px 0 #e8ebe4}
+.overview-table-panel .asset-name{min-width:0}
+.overview-table-panel .asset-name strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.holding-high-date{display:block;font-size:10px;color:#7c8875;margin-top:4px}
+.holding-high-note{font-size:11px;color:#74816e;line-height:1.8;margin:10px 0 8px}
 @media(max-width:850px){.overview-grid{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:640px){
   html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
@@ -20,22 +31,15 @@ html{overflow-y:scroll;scrollbar-gutter:stable}
   .familiar-switch{flex-wrap:wrap}
   .settings-save-row,.data-actions{flex-wrap:wrap}
   .overview-table-panel{padding:14px 10px}
-  .overview-table-panel>.table-wrap{overflow-x:visible}
-  .overview-table-panel table{table-layout:fixed;width:100%;white-space:normal}
-  .overview-table-panel :is(th,td){padding:11px 3px;overflow-wrap:anywhere;vertical-align:middle;font-variant-numeric:tabular-nums}
-  .overview-table-panel th{font-size:9px;line-height:1.5}
-  .overview-table-panel td{font-size:10px;line-height:1.6}
-  .overview-table-panel :is(th,td):nth-child(1){width:23%}
-  .overview-table-panel :is(th,td):nth-child(2){width:10%}
-  .overview-table-panel :is(th,td):nth-child(3){width:17%}
-  .overview-table-panel :is(th,td):nth-child(4){width:22%}
-  .overview-table-panel :is(th,td):nth-child(5){width:14%}
-  .overview-table-panel :is(th,td):nth-child(6){width:14%}
+  .overview-table-panel .holding-symbol-column{width:100px}
+  .overview-table-panel .holding-peak-column{width:102px}
+  .overview-table-panel .holding-gain-column{width:108px}
+  .overview-table-panel :is(th,td){padding:11px 10px;vertical-align:middle;font-size:12px}
   .overview-table-panel .asset-avatar{display:none}
   .overview-table-panel .asset-cell{display:block;min-width:0}
-  .overview-table-panel .asset-name :is(strong,small){font-size:10px;white-space:normal;overflow-wrap:anywhere}
-  .overview-table-panel .tag{padding:3px 2px;font-size:9px;white-space:normal}
-  .overview-table-panel .empty-cell{width:auto!important;padding:22px 8px}
+  .overview-table-panel .asset-name :is(strong,small){font-size:11px;white-space:nowrap}
+  .overview-table-panel .tag{padding:4px 7px;font-size:10px}
+  .overview-table-panel .empty-cell{text-align:left;padding:22px 8px}
   .overview-holding-tools{width:100%;max-width:100%}
   .overview-holding-tools .search-input{min-width:0;width:100%}
   /* iOS otherwise zooms the viewport when focusing inputs smaller than 16px. */
@@ -43,3 +47,4 @@ html{overflow-y:scroll;scrollbar-gutter:stable}
   .mobile-nav{height:calc(65px + env(safe-area-inset-bottom));padding-bottom:env(safe-area-inset-bottom)}
   .main-area{padding-bottom:calc(85px + env(safe-area-inset-bottom))}
 }
+@media(max-width:370px){.overview-table-panel :is(th,td):first-child:not(.empty-cell){position:static;box-shadow:none}}

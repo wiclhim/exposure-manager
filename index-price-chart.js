@@ -1,8 +1,16 @@
-(()=>{'use strict';let all=[],months=1;const panel=document.createElement('article');panel.className='panel market-panel index-price-panel';panel.innerHTML='<div class="panel-top"><div><div class="section-label">TAIEX MARKET LEVEL</div><h2>加權指數市場水位</h2></div><span class="subtle-pill">近一年最高收盤基準</span></div><div id="indexPriceSummary" class="index-price-summary">等待已收盤指數資料…</div><div class="market-chart-toolbar"><div id="indexPriceRanges">'+[1,3,6,12].map(n=>`<button data-months="${n}">${n===12?'1Y':n+'M'}</button>`).join('')+'</div><span id="indexPriceDates"></span></div><div id="indexPriceSvg" class="market-chart"></div><div class="market-chart-legend"><span>🟩 正常：回檔 10% 以內</span><span>🟨 觀察：回檔 10～20%</span><span>🟥 股災：回檔 20% 以上</span></div><p id="indexKdContext" class="index-kd-context"></p><small>資料來源：Fugle IX0001 日 K。此圖採已收盤指數；區間基準不隨時間切換改變。</small>';
+(()=>{'use strict';let all=[],months=1,live=window.exposureIndexQuote?.();const panel=document.createElement('article');panel.className='panel market-panel index-price-panel';panel.innerHTML='<div class="panel-top"><div><div class="section-label">TAIEX MARKET LEVEL</div><h2>加權指數市場水位</h2></div><span class="subtle-pill">近一年最高收盤基準</span></div><div id="indexPriceSummary" class="index-price-summary">等待已收盤指數資料…</div><div class="market-chart-toolbar"><div id="indexPriceRanges">'+[1,3,6,12].map(n=>`<button data-months="${n}">${n===12?'1Y':n+'M'}</button>`).join('')+'</div><span id="indexPriceDates"></span></div><div id="indexPriceSvg" class="market-chart"></div><div class="market-chart-legend"><span>🟩 正常：回檔 10% 以內</span><span>🟨 觀察：回檔 10～20%</span><span>🟥 股災：回檔 20% 以上</span></div><p id="indexKdContext" class="index-kd-context"></p><small>資料來源：Fugle IX0001 報價／日 K。上方數值與 0050 同步更新；走勢圖與 Beta 訊號採收盤日線。</small>';
 document.querySelector('#page-overview .overview-grid').append(panel);
 const fmt=n=>Number(n).toLocaleString('zh-TW',{minimumFractionDigits:2,maximumFractionDigits:2});
-function render(){if(all.length<2)return;const last=all.at(-1),previous=all.at(-2),high=Math.max(...all.map(r=>r.close)),highRow=all.find(r=>r.close===high),distance=(last.close/high-1)*100,cutoff=new Date(last.date+'T00:00:00Z');cutoff.setUTCMonth(cutoff.getUTCMonth()-months);const rows=all.filter(r=>r.date>=cutoff.toISOString().slice(0,10)),floor=Math.min(.7,...rows.map(r=>r.close/high))-.015,ceiling=1.025,x=i=>78+i/Math.max(1,rows.length-1)*744,y=v=>22+(ceiling-v)/(ceiling-floor)*298;
-document.getElementById('indexPriceSummary').innerHTML=`<div><span>距近一年最高收盤</span><strong>${distance.toFixed(2)}%</strong><small>${distance<=-20?'股災區間':distance<=-10?'觀察區間':'正常區間'}</small></div><div><span>最新收盤指數</span><strong>${fmt(last.close)}</strong><small>${last.date}</small></div><div><span>近一年最高收盤</span><strong>${fmt(high)}</strong><small>${highRow.date}</small></div>`;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function renderSummary(){
+ const last=all.at(-1),highRow=all.reduce((best,row)=>!best||row.close>best.close?row:best,null);
+ const quote=live?.price>0&&(!last||!live.date||live.date>=last.date)?live:null;
+ const price=quote?.price??last?.close,high=highRow?.close,distance=price>0&&high>0?(price/high-1)*100:null;
+ const zone=distance==null?'等待歷史高點':distance>=0?'已達／超過高點':distance<=-20?'股災區間':distance<=-10?'觀察區間':'正常區間';
+ document.getElementById('indexPriceSummary').innerHTML=`<div><span>距近一年最高收盤</span><strong>${distance==null?'—':distance.toFixed(2)+'%'}</strong><small>${zone}</small></div><div><span>${quote?'目前指數':'最新收盤指數'}</span><strong>${price?fmt(price):'—'}</strong><small>${quote?esc(quote.time)+' · '+(quote.source==='Fugle WebSocket'?'推播':'報價'):esc(last?.date||'等待報價')}</small></div><div><span>近一年最高收盤</span><strong>${high?fmt(high):'—'}</strong><small>${esc(highRow?.date||'')}</small></div>`;
+}
+function render(){if(all.length<2){renderSummary();return;}const last=all.at(-1),previous=all.at(-2),high=Math.max(...all.map(r=>r.close)),cutoff=new Date(last.date+'T00:00:00Z');cutoff.setUTCMonth(cutoff.getUTCMonth()-months);const rows=all.filter(r=>r.date>=cutoff.toISOString().slice(0,10)),floor=Math.min(.7,...rows.map(r=>r.close/high))-.015,ceiling=1.025,x=i=>78+i/Math.max(1,rows.length-1)*744,y=v=>22+(ceiling-v)/(ceiling-floor)*298;
+renderSummary();
 let svg=[[1,.9,'#dce8df','正常'],[.9,.8,'#eee2c5','觀察'],[.8,floor,'#ecd2d2','股災']].map(([a,b,color,label])=>`<rect x="12" y="${y(a)}" width="876" height="${y(b)-y(a)}" fill="${color}"/><text x="23" y="${y(a)+39}">${label}</text>`).join('');
 [1,.9,.8].forEach(v=>svg+=`<line x1="78" x2="822" y1="${y(v)}" y2="${y(v)}" stroke="#8994a0" stroke-dasharray="6 6"/><text x="23" y="${y(v)+17}">${Math.round((v-1)*100)}%</text><text x="878" y="${y(v)+17}" text-anchor="end">${fmt(high*v)}</text>`);
 svg+=`<polyline points="${rows.map((r,i)=>`${x(i)},${y(r.close/high)}`).join(' ')}" fill="none" stroke="#334155" stroke-width="2.8" stroke-linejoin="round"/>`;
@@ -17,4 +25,6 @@ document.getElementById('indexKdContext').textContent=golden?'KD 低檔黃金交
 }
 panel.addEventListener('click',e=>{const b=e.target.closest('[data-months]');if(b){months=Number(b.dataset.months);render();}});
 window.addEventListener('exposure-index-data',e=>{all=e.detail;render();});
+window.addEventListener('exposure-index-quote',e=>{live=e.detail;renderSummary();});
+renderSummary();
 })();

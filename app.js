@@ -2,7 +2,7 @@
   'use strict';
   const STORE_KEY = 'exposureManager.v1';
   const defaults = {
-    holdings: [], cash: 0, history: [], quoteCache: {}, marketHistory: null,
+    holdings: [], cash: 0, history: [], quoteCache: {}, marketHistory: null, holdingHighs: {},
     settings: { targetBeta: 1, tolerance: 10, target: { lever: 20, core: 60, cash: 20 }, refreshSeconds: 60, benchmark: '0050' }
   };
   let apiConfigured = false;
@@ -18,6 +18,10 @@
   let rateUsageTimer = null;
   let swapSymbolDebounce = null;
   const quoteRequestsInFlight = new Map();
+  const historyRequestsInFlight = new Map();
+  const holdingHighRetry = new Map();
+  let isRefreshingHoldingHighs = false;
+  const HISTORY_TTL = 12*60*60*1000;
   let lastRateLimitNoticeAt = 0;
   let apiRateUsage = { configured:false, used:null, limit:40, remaining:null };
   const WS_KEY_STORE = 'exposureFugleWsKey.v1';
@@ -164,12 +168,13 @@
     const holdings=state.holdings.filter(h=>h.symbol);
     const visible=holdings.filter(h=>`${h.symbol} ${h.name||''}`.toLowerCase().includes(search)).sort((a,b)=>marketValue(b)-marketValue(a));
     $('overviewHoldingsCount').textContent=search?`顯示 ${visible.length} / ${holdings.length} 檔`:`共 ${holdings.length} 檔持股`;
-    if (!visible.length) body.innerHTML = `<tr><td colspan="6" class="empty-cell">${search?'找不到符合的持股。':'尚未新增持股，請至「設定 → 持股」輸入資料。'}</td></tr>`;
+    if (!visible.length) body.innerHTML = `<tr><td colspan="8" class="empty-cell">${search?'找不到符合的持股。':'尚未新增持股，請至「設定 → 持股」輸入資料。'}</td></tr>`;
     else body.innerHTML = visible.map(h => {
-      const q = h.quote || state.quoteCache[h.symbol];
-      return `<tr><td><div class="asset-cell"><div class="asset-avatar">${escapeHtml(String(h.symbol).slice(0,4))}</div><div class="asset-name"><strong>${escapeHtml(h.name || h.symbol)}</strong><small>${escapeHtml(h.symbol)}</small></div></div></td><td><span class="tag ${categoryClass(h.category)}">${categoryName(h.category)}</span></td><td class="right">${priceOf(h) ? money2(priceOf(h)) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${number(h.quantity)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td></tr>`;
+      const price=priceOf(h),high=holdingHighOf(h.symbol),gain=MarketQuotes.gainToHigh(price,high?.highPrice);
+      return `<tr><td><div class="asset-cell"><div class="asset-avatar">${escapeHtml(String(h.symbol).slice(0,4))}</div><div class="asset-name"><strong>${escapeHtml(h.name || h.symbol)}</strong><small>${escapeHtml(h.symbol)}</small></div></div></td><td><span class="tag ${categoryClass(h.category)}">${categoryName(h.category)}</span></td><td class="right">${price ? money2(price) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${number(h.quantity)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td><td class="right">${high?`${money2(high.highPrice)}<small class="holding-high-date">${escapeHtml(high.highPriceDate||'')}</small>`:'—'}</td><td class="right">${gain==null?'—':gain===0?'已達高點':`+${gain.toFixed(2)}%`}</td></tr>`;
     }).join('');
     renderMarketCard();
+    window.dispatchEvent(new CustomEvent('exposure-index-quote',{detail:indexQuoteReading()}));
   }
   function renderMarketCard() {
     const symbol = String(state.settings.benchmark || '0050').toUpperCase();
@@ -426,13 +431,16 @@
     quoteRequestsInFlight.set(normalized, task);
     try { return await task; } finally { quoteRequestsInFlight.delete(normalized); }
   }
-  function websocketPrioritySymbols() {
-    const unique = [...new Set([...state.holdings.map(h=>String(h.symbol||'').toUpperCase()), String(state.settings.benchmark||'0050').toUpperCase()].filter(Boolean))];
-    const preferred = ['0050','00631L','00685L','009816'];
-    const ranked = [...preferred.filter(x=>unique.includes(x)), ...state.holdings.slice().sort((a,b)=>marketValue(b)-marketValue(a)).map(h=>String(h.symbol||'').toUpperCase()).filter(x=>unique.includes(x))];
-    return [...new Set(ranked)].slice(0,5);
+  function currentQuoteSymbols(extra='') { return MarketQuotes.symbols([...MarketQuotes.marketPair(state.settings.benchmark),...state.holdings.map(h=>h.symbol),extra]); }
+  function indexQuoteReading() {
+    const q=state.quoteCache[MarketQuotes.INDEX],price=Number(q?.price);
+    if(!Number.isFinite(price)||price<=0)return null;
+    const timestamp=q.quoteTime||q.lastUpdated,ms=MarketQuotes.timestamp(timestamp);
+    return {price,time:fmtTime(timestamp),date:q.date||(ms?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms)):null),source:q.source||'Fugle'};
   }
   function updateQuoteEverywhere(symbol, quote) {
+    const previous=state.quoteCache[symbol],older=MarketQuotes.timestamp(quote.quoteTime||quote.lastUpdated),newer=MarketQuotes.timestamp(previous?.quoteTime||previous?.lastUpdated);
+    if(older&&newer&&older<newer)return;
     state.quoteCache[symbol] = quote;
     state.holdings.forEach(h => { if (String(h.symbol).toUpperCase() === symbol) h.quote = quote; });
     const swapOpen = $('swapModal')?.classList.contains('open');
@@ -450,10 +458,9 @@
   function connectFugleWebSocket() {
     const key = localStorage.getItem(WS_KEY_STORE);
     if (!key || !apiConfigured || !('WebSocket' in window)) { $('wsStateText').textContent = 'WebSocket 未啟用，將使用 REST。'; return; }
-    const symbols = websocketPrioritySymbols();
-    wsSymbols = new Set(symbols);
-    if (!symbols.length) { $('wsStateText').textContent = '尚無持倉代號，WebSocket 等待持倉。'; return; }
     if (fugleSocket && (fugleSocket.readyState === WebSocket.OPEN || fugleSocket.readyState === WebSocket.CONNECTING)) return;
+    const plan=MarketQuotes.subscriptions(state.holdings.slice().sort((a,b)=>marketValue(b)-marketValue(a)).map(h=>h.symbol),state.settings.benchmark);
+    const requested=new Set(plan.map(item=>item.symbol)),pair=MarketQuotes.marketPair(state.settings.benchmark);
     clearTimeout(wsRetryTimer);
     wsShouldRun = true;
 
@@ -462,30 +469,42 @@
       try { socket = new WebSocket('wss://api.fugle.tw/marketdata/v1.0/stock/streaming'); }
       catch (error) { reject(error); return; }
       fugleSocket = socket;
-      $('wsStateText').textContent = `WebSocket 連線中：${symbols.join('、')}（最多 5 檔）`;
+      wsSymbols.clear();
+      const pendingPair=new Map();
+      $('wsStateText').textContent = `WebSocket 連線中：${[...requested].join('、')}（最多 5 檔）`;
       socket.onopen = () => socket.send(JSON.stringify({event:'auth',data:{apikey:key}}));
       socket.onmessage = event => {
+        if(fugleSocket!==socket||!wsShouldRun)return;
         let msg; try { msg = JSON.parse(event.data); } catch { return; }
         if (msg.event === 'authenticated') {
-          symbols.forEach(symbol => socket.send(JSON.stringify({event:'subscribe',data:{channel:'trades',symbol}})));
-          $('wsStateText').textContent = `WebSocket 已驗證，推播 ${symbols.length} 檔：${symbols.join('、')}`;
+          plan.forEach(data=>socket.send(JSON.stringify({event:'subscribe',data})));
+          $('wsStateText').textContent = `WebSocket 已驗證，等待 ${[...requested].join('、')} 的推播；尚未收到資料的標的沿用 REST。`;
           wsRetryDelay = 3000;
         } else if (msg.event === 'snapshot' || msg.event === 'data') {
-          const d = msg.data || {}; const symbol = String(d.symbol || '').toUpperCase();
-          if (!symbol || !wsSymbols.has(symbol)) return;
-          const price = Number(d.price || d.lastPrice || d.closePrice || 0);
-          if (price > 0) {
-            updateQuoteEverywhere(symbol, {symbol, name:state.holdings.find(h=>h.symbol===symbol)?.name||symbol, price, change:0, changePercent:0, previousClose:0, quoteTime:d.time||null, lastUpdated:d.time||Date.now(), source:'Fugle WebSocket', isClose:Boolean(d.isClose), isTrial:Boolean(d.isTrial)});
-            persist(); renderAll();
-            $('footerUpdated').textContent = `WebSocket ${symbol} 更新 ${fmtTime(d.time||Date.now())}`;
-          }
+          const quote=MarketQuotes.fromStream(msg);
+          if(!quote||!requested.has(quote.symbol))return;
+          const symbol=quote.symbol;
+          wsSymbols.add(symbol);
+          if(pair.includes(symbol)){
+            pendingPair.set(symbol,quote);
+            // Both homepage prices use REST until each stream supplies a valid quote.
+            if(!pair.every(s=>wsSymbols.has(s)))return;
+            for(const [s,q] of pendingPair)updateQuoteEverywhere(s,q);
+            pendingPair.clear();
+          }else updateQuoteEverywhere(symbol,quote);
+          $('wsStateText').textContent=`WebSocket 推播：${[...wsSymbols].filter(s=>!pair.includes(s)||pair.every(p=>wsSymbols.has(p))).join('、')}；其餘使用 REST。`;
+          persist(); renderAll();
+          $('footerUpdated').textContent = `WebSocket ${symbol} 更新 ${fmtTime(quote.quoteTime||quote.lastUpdated)}`;
         } else if (msg.event === 'error') {
+          const symbol=MarketQuotes.symbol(msg.data?.symbol);
+          if(symbol)wsSymbols.delete(symbol);else wsSymbols.clear();
+          if(!symbol||pair.includes(symbol))pendingPair.clear();
           $('wsStateText').textContent = `WebSocket 錯誤：${msg.data?.message || msg.message || '請檢查方案及 API Key'}`;
         }
       };
-      socket.onerror = () => { $('wsStateText').textContent = 'WebSocket 連線異常，REST 將接手更新。'; };
+      socket.onerror = () => { if(fugleSocket===socket){wsSymbols.clear();pendingPair.clear();$('wsStateText').textContent = 'WebSocket 連線異常，REST 將接手更新。';} };
       socket.onclose = () => {
-        if (fugleSocket === socket) fugleSocket = null;
+        if (fugleSocket === socket) {fugleSocket = null;wsSymbols.clear();}
         if (releaseWsLock) { const release = releaseWsLock; releaseWsLock = null; release(); }
         resolve();
         if (wsShouldRun) {
@@ -525,9 +544,9 @@
     isRefreshing = true;
     try {
       const activeSwapSymbol = $('swapModal')?.classList.contains('open') ? String($('swapSymbol')?.value || '').trim().toUpperCase() : '';
-      const all = [...new Set([...state.holdings.map(h=>h.symbol), state.settings.benchmark || '0050', activeSwapSymbol].filter(Boolean).map(x=>String(x).toUpperCase()))];
-      const wsReady = fugleSocket && fugleSocket.readyState === WebSocket.OPEN && wsSymbols.size > 0;
-      const symbols = wsReady ? all.filter(symbol=>!wsSymbols.has(symbol)) : all;
+      const all = currentQuoteSymbols(activeSwapSymbol);
+      const streaming=fugleSocket&&fugleSocket.readyState===WebSocket.OPEN?wsSymbols:new Set();
+      const symbols = MarketQuotes.restSymbols(all,streaming,state.settings.benchmark);
       for (const symbol of symbols) {
         try { const quote = await fetchQuote(symbol); updateQuoteEverywhere(symbol, quote); }
         catch (e) {
@@ -538,33 +557,76 @@
       persist(); renderAll(); if ($('swapModal')?.classList.contains('open')) updateSwapPreview();
       $('footerUpdated').textContent = `REST 輪詢 ${symbols.length} 檔 · ${new Intl.DateTimeFormat('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date())}`;
     } finally { isRefreshing = false; }
+    void refreshHoldingHighs();
+  }
+  function holdingHighOf(symbol){
+    const s=MarketQuotes.symbol(symbol),market=state.marketHistory?.symbol===s?state.marketHistory:null,holding=state.holdingHighs?.[s];
+    return [market,holding].filter(h=>Number(h?.highPrice)>0).sort((a,b)=>(b.fetchedAt||0)-(a.fetchedAt||0))[0]||null;
+  }
+  function freshHigh(history){return Number(history?.highPrice)>0&&Date.now()-Number(history.fetchedAt)<HISTORY_TTL;}
+  async function fetchMarketHistory(symbol){
+    if(historyRequestsInFlight.has(symbol))return historyRequestsInFlight.get(symbol);
+    const task=(async()=>{
+      const r=await fetch(`/api/history?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
+      acceptRateHeaders(r);
+      const body=await r.json().catch(()=>({}));
+      if(!r.ok)throw Object.assign(new Error(body.error||'歷史資料取得失敗'),{code:body.code});
+      return {...body,fetchedAt:Date.now()};
+    })();
+    historyRequestsInFlight.set(symbol,task);
+    try{return await task;}finally{historyRequestsInFlight.delete(symbol);}
+  }
+  async function refreshHoldingHighs(){
+    if(!apiConfigured||isRefreshingHoldingHighs||currentPage!=='overview'||document.hidden)return;
+    const symbols=MarketQuotes.symbols(state.holdings.map(h=>h.symbol));
+    const pending=symbols.filter(s=>!freshHigh(holdingHighOf(s))&&(holdingHighRetry.get(s)||0)<=Date.now()).slice(0,4);
+    if(!pending.length)return;
+    isRefreshingHoldingHighs=true;
+    let changed=false;
+    try{
+      for(const symbol of pending){
+        if(apiRateUsage.remaining!=null&&apiRateUsage.remaining<2)break;
+        try{
+          const h=holdingHighOf(symbol);
+          if(freshHigh(h))continue;
+          const history=await fetchMarketHistory(symbol);
+          if(!(Number(history.highPrice)>0))throw Error('缺少最高價');
+          if(!state.holdings.some(h=>MarketQuotes.symbol(h.symbol)===symbol))continue;
+          state.holdingHighs=state.holdingHighs||{};
+          state.holdingHighs[symbol]={highPrice:history.highPrice,highPriceDate:history.highPriceDate,fetchedAt:history.fetchedAt};
+          holdingHighRetry.delete(symbol);changed=true;
+        }catch(e){
+          const limited=['FUGLE_REST_RATE_LIMIT','RATE_LIMITER_UNAVAILABLE','RATE_LIMITER_NOT_CONFIGURED'].includes(e.code);
+          holdingHighRetry.set(symbol,Date.now()+(limited?60000:600000));
+          if(limited)break;
+        }
+      }
+    }finally{
+      isRefreshingHoldingHighs=false;
+      if(changed){persist();renderOverview();}
+    }
   }
   async function refreshMarketHistory(force) {
     if (!apiConfigured) return;
     const symbol = String(state.settings.benchmark || '0050').toUpperCase();
     const cache = state.marketHistory;
-    if (!force && cache && cache.symbol === symbol && cache.fetchedAt && Date.now()-cache.fetchedAt < 12*60*60*1000) return;
+    if (!force && cache?.symbol === symbol && freshHigh(cache)) return;
     try {
-      const r = await fetch(`/api/history?symbol=${encodeURIComponent(symbol)}`, { cache:'no-store' });
-      acceptRateHeaders(r);
-      const body = await r.json().catch(()=>({}));
-      if (!r.ok && (body.code === 'FUGLE_REST_RATE_LIMIT' || body.code === 'RATE_LIMITER_UNAVAILABLE' || body.code === 'RATE_LIMITER_NOT_CONFIGURED')) await refreshRateLimitUsage();
-      if (!r.ok) throw new Error(body.error || '歷史資料取得失敗');
-      state.marketHistory = { ...body, fetchedAt:Date.now() }; persist(); renderMarketCard();
+      state.marketHistory = await fetchMarketHistory(symbol); persist(); renderOverview();
       notify(`${symbol} 52 週收盤高點已更新`);
     } catch(e) { $('marketSourceText').textContent = `歷史資料更新失敗：${e.message}`; }
   }
   function startQuoteTimer() {
     stopQuoteTimer();
     connectFugleWebSocket();
-    const symbols = new Set([...state.holdings.map(h=>h.symbol), state.settings.benchmark || '0050'].filter(Boolean));
+    const symbols = currentQuoteSymbols();
     const sec = 60; // user's requested cadence; keep REST comfortably below free-tier limit
     quoteTimer = setInterval(refreshQuotes, sec*1000);
     if (rateUsageTimer) clearInterval(rateUsageTimer);
     rateUsageTimer = setInterval(refreshRateLimitUsage, 30000);
-    if (apiConfigured) $('sideStatusSub').textContent = `WebSocket 最多 5 檔 + 其餘 REST 每 ${sec} 秒 · ${symbols.size} 個代號`;
+    if (apiConfigured) $('sideStatusSub').textContent = `WebSocket 最多 5 檔 + 其餘 REST 每 ${sec} 秒 · ${symbols.length} 個代號`;
   }
-  function stopQuoteTimer() { if (quoteTimer) clearInterval(quoteTimer); quoteTimer = null; if (rateUsageTimer) clearInterval(rateUsageTimer); rateUsageTimer = null; clearTimeout(wsRetryTimer); wsShouldRun = false; if (fugleSocket) { try { fugleSocket.close(); } catch {} } }
+  function stopQuoteTimer() { if (quoteTimer) clearInterval(quoteTimer); quoteTimer = null; if (rateUsageTimer) clearInterval(rateUsageTimer); rateUsageTimer = null; clearTimeout(wsRetryTimer); wsShouldRun = false; wsSymbols.clear(); if (fugleSocket) { try { fugleSocket.close(); } catch {} } }
 
   function clearHoldingForm() {
     $('holdingForm').reset(); $('editHoldingId').value=''; $('holdingModalTitle').textContent='新增持股';
@@ -680,7 +742,7 @@
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
   }
   function exportHoldings() {
-    const rows=[['代號','名稱','分類','數量','成本均價','目前價格','市值','Beta','報價時間'],...state.holdings.map(h=>[h.symbol,h.name,categoryName(h.category),h.quantity,h.cost,priceOf(h),marketValue(h),h.beta,fmtTime(h.quote?.quoteTime||h.quote?.lastUpdated)])];
+    const rows=[['代號','名稱','分類','數量','成本均價','目前價格','市值','Beta','報價時間','52 週最高價','高點日期','回到高點需漲%'],...state.holdings.map(h=>{const high=holdingHighOf(h.symbol),gain=MarketQuotes.gainToHigh(priceOf(h),high?.highPrice);return [h.symbol,h.name,categoryName(h.category),h.quantity,h.cost,priceOf(h),marketValue(h),h.beta,fmtTime(h.quote?.quoteTime||h.quote?.lastUpdated),high?.highPrice,high?.highPriceDate,gain?.toFixed(2)];})];
     csvDownload(`exposure-manager-holdings-${today()}.csv`,rows);
   }
   function exportHistory() {
@@ -1130,5 +1192,6 @@
     checkApiStatus();
   }
   window.exposureRiskBridge={getTarget:()=>Number(state.settings.targetBeta),setTarget:value=>{if(!Number.isFinite(value)||value<0||value>5)return;saveFamiliarValue('targetBeta',value);renderSettings();notify('已更新目標 Beta，請至再平衡頁確認調整。');}};
+  window.exposureIndexQuote=indexQuoteReading;
   init();
 })();
