@@ -168,10 +168,11 @@
     const holdings=state.holdings.filter(h=>h.symbol);
     const visible=holdings.filter(h=>`${h.symbol} ${h.name||''}`.toLowerCase().includes(search)).sort((a,b)=>marketValue(b)-marketValue(a));
     $('overviewHoldingsCount').textContent=search?`顯示 ${visible.length} / ${holdings.length} 檔`:`共 ${holdings.length} 檔持股`;
-    if (!visible.length) body.innerHTML = `<tr><td colspan="8" class="empty-cell">${search?'找不到符合的持股。':'尚未新增持股，請至「設定 → 持股」輸入資料。'}</td></tr>`;
+    if (!visible.length) body.innerHTML = `<tr><td colspan="7" class="empty-cell">${search?'找不到符合的持股。':'尚未新增持股，請至「設定 → 持股」輸入資料。'}</td></tr>`;
     else body.innerHTML = visible.map(h => {
       const price=priceOf(h),high=holdingHighOf(h.symbol),gain=MarketQuotes.gainToHigh(price,high?.highPrice);
-      return `<tr><td><div class="asset-cell"><div class="asset-avatar">${escapeHtml(String(h.symbol).slice(0,4))}</div><div class="asset-name"><strong>${escapeHtml(h.name || h.symbol)}</strong><small>${escapeHtml(h.symbol)}</small></div></div></td><td><span class="tag ${categoryClass(h.category)}">${categoryName(h.category)}</span></td><td class="right">${price ? money2(price) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${number(h.quantity)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td><td class="right">${high?`${money2(high.highPrice)}<small class="holding-high-date">${escapeHtml(high.highPriceDate||'')}</small>`:'—'}</td><td class="right">${gain==null?'—':gain===0?'已達高點':`+${gain.toFixed(2)}%`}</td></tr>`;
+      const symbol=escapeHtml(h.symbol),name=escapeHtml(h.name||h.symbol),category=categoryName(h.category);
+      return `<tr><td><div class="overview-asset"><div class="overview-asset-heading"><strong title="${symbol}">${symbol}</strong><span class="tag ${categoryClass(h.category)}" title="${category}">${h.category==='cash'?'類現金':category}</span></div><small title="${name}">${name}</small></div></td><td class="right">${price ? money2(price) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${number(h.quantity)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td><td class="right">${high?`${money2(high.highPrice)}<small class="holding-high-date">${escapeHtml(high.highPriceDate||'')}</small>`:'—'}</td><td class="right">${gain==null?'—':gain===0?'已達高點':`+${gain.toFixed(2)}%`}</td></tr>`;
     }).join('');
     renderMarketCard();
     window.dispatchEvent(new CustomEvent('exposure-index-quote',{detail:indexQuoteReading()}));
