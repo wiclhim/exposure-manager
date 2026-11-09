@@ -9,7 +9,7 @@ from pathlib import Path
 from queue import Queue
 import re
 import sys
-from threading import BoundedSemaphore, Condition, Thread
+from threading import BoundedSemaphore, Lock, Thread
 from time import sleep
 from urllib.parse import parse_qs, urlsplit
 
@@ -20,6 +20,7 @@ PORT = 8765
 SITE = "https://exposure-manager.vercel.app"
 INDEX = "IX0001"
 MAX_SYMBOLS = 100
+STREAM_INTERVAL = 20
 TAIPEI = timezone(timedelta(hours=8))
 
 
@@ -40,7 +41,7 @@ def allowed_request(headers, remote_host, remote_login):
 class QuoteFeed:
     def __init__(self, previous_quotes=()):
         self.state = "connecting"
-        self.changed = Condition()
+        self.lock = Lock()
         self.asked = set()
         self.unsupported = set()
         self.quotes = {quote["symbol"]: quote for quote in previous_quotes}
@@ -59,17 +60,16 @@ class QuoteFeed:
             return
         millis = int(stamp.timestamp() * 1000)
         code = event.code
-        with self.changed:
+        with self.lock:
             previous = self.quotes.get(code)
             if code in self.asked and (not previous or previous["quoteTime"] <= millis):
                 self.quotes[code] = {
                     "symbol": code, "price": price, "quoteTime": millis,
                     "date": stamp.date().isoformat(), "source": "永豐 Shioaji",
                 }
-                self.changed.notify_all()
 
     def read(self, symbols):
-        with self.changed:
+        with self.lock:
             new_symbols = [code for code in symbols if code not in self.asked]
             remaining = max(0, MAX_SYMBOLS - len(self.asked))
             for code in new_symbols[:remaining]:
@@ -85,15 +85,9 @@ class QuoteFeed:
             "stream": True,
         }
 
-    def next_snapshot(self, symbols, previous):
-        with self.changed:
-            self.changed.wait_for(lambda: self.snapshot(symbols) != previous, timeout=15)
-            return self.snapshot(symbols)
-
     def set_state(self, state):
-        with self.changed:
+        with self.lock:
             self.state = state
-            self.changed.notify_all()
 
     def run(self, keys):
         api = sj.Shioaji(simulation=True)
@@ -117,9 +111,8 @@ class QuoteFeed:
                 quote_type = sj.QuoteType.Quote if contract.security_type == sj.SecurityType.Index else sj.QuoteType.Tick
                 api.subscribe(contract, quote_type=quote_type)
             except Exception:
-                with self.changed:
+                with self.lock:
                     self.unsupported.add(code)
-                    self.changed.notify_all()
 
 
 def serve(keys):
@@ -173,8 +166,7 @@ def serve(keys):
                     self.send_error(503)
                     return
                 try:
-                    interval = 2 if parse_qs(target.query).get("interval") == ["2"] else 0
-                    self.stream_quotes(origin, symbols, interval)
+                    self.stream_quotes(origin, symbols)
                 finally:
                     stream_slots.release()
                 return
@@ -193,21 +185,19 @@ def serve(keys):
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
 
-        def stream_quotes(self, origin, symbols, interval):
+        def stream_quotes(self, origin, symbols):
             self.quote_headers(origin, "text/event-stream; charset=utf-8")
             self.end_headers()
             self.connection.settimeout(5)
             previous = None
-            snapshot = feed.read(symbols)
             try:
                 while True:
+                    snapshot = feed.read(symbols)
                     frame = ": heartbeat\n\n" if snapshot == previous else "data: " + json.dumps(snapshot, ensure_ascii=False) + "\n\n"
                     self.wfile.write(frame.encode("utf-8"))
                     self.wfile.flush()
-                    if snapshot != previous and interval:
-                        sleep(interval)
                     previous = snapshot
-                    snapshot = feed.next_snapshot(symbols, previous)
+                    sleep(STREAM_INTERVAL)
             except OSError:
                 return
 

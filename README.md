@@ -49,7 +49,7 @@
 
 ## 行情來源與計算
 
-- Windows 本機服務 scripts/shioaji-feed.py 維持一條永豐 Shioaji 行情連線。首頁的市場水位標的（預設 0050）與加權指數在頁面可見時即時接收本機推播，持倉表每 60 秒同步同一份快取。
+- Windows 本機服務 scripts/shioaji-feed.py 維持一條永豐 Shioaji 行情連線。首頁的市場水位標的（預設 0050）與加權指數在頁面可見時每 20 秒接收一批有變動的報價，持倉表每 60 秒同步同一份快取。
 - 服務只聆聽 127.0.0.1:8765，跨來源只允許正式網站讀取。首次使用在設定按「連線本機永豐」，並依瀏覽器提示允許本機網路。休市或停機時顯示既有最後一筆報價及其時間。
 - 手機使用同一個 Tailscale 帳號，透過家中 Windows 電腦上的 Tailscale Serve HTTPS 代理讀取報價。服務需設定 EXPOSURE_TAILSCALE_HOST（電腦的完整 MagicDNS 名稱）與 EXPOSURE_TAILSCALE_LOGIN（允許的帳號 LoginName）。服務只接受該帳號與主機的 Serve 請求。手機在「設定 → 進階設定與行情連線 → 手機遠端行情」儲存 HTTPS 網址，電腦和行情服務須保持運作。
 - 在「設定 → 進階設定與行情連線」按「啟用 ngrok 預設」，透過既有本機或 Tailscale 驗證這台裝置。之後前景頁面優先用 ngrok，連不上時嘗試保存的 Tailscale 備用網址或本機服務。家中電腦須執行行情服務及 ngrok。

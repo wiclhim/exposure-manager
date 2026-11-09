@@ -357,7 +357,7 @@
     $('marketStatusText').textContent = status;
     $('shioajiModeText').textContent = status;
     $('sideStatusText').textContent = '永豐 Shioaji · ' + quoteConnectionName(quoteOrigin());
-    $('sideStatusSub').textContent = '市場水位即時推播 · 持倉每 60 秒同步';
+    $('sideStatusSub').textContent = '市場水位每 20 秒推播 · 持倉每 60 秒同步';
     $('providerState').textContent = ready ? '已連線' : '等待行情服務';
     $('checkApiBtn').textContent = '重新連線永豐';
     $('pairNgrokBtn').textContent = ngrokToken ? '重新配對 ngrok' : '啟用 ngrok 預設';
@@ -473,8 +473,14 @@
     updateApiStatusUi();
     void refreshQuotes(true);
   }
-  function applyShioajiQuotes(quotes, stream) {
-    quotes.forEach(quote => updateQuoteEverywhere(quote.symbol, quote));
+  function applyShioajiQuotes(quotes, stream, refreshMarket) {
+    for (const quote of quotes) {
+      updateQuoteEverywhere(quote.symbol, quote);
+      const live = liveMarketQuotes.get(quote.symbol);
+      if (refreshMarket && live && MarketQuotes.timestamp(quote.quoteTime) >= MarketQuotes.timestamp(live.quoteTime)) {
+        liveMarketQuotes.set(quote.symbol, quote);
+      }
+    }
     const via = ' · ' + quoteConnectionName(quoteOrigin());
     shioajiStatus = marketStream?.readyState === 1 ? '已連線 · 永豐即時推播' + via
       : stream ? '已連線 · 正在連接永豐推播' + via : '已連線 · 每 60 秒同步' + via;
@@ -486,6 +492,7 @@
   function marketQuote(symbol) {
     const live = liveMarketQuotes.get(symbol);
     const saved = state.quoteCache[symbol];
+    if (live && marketStream?.readyState === 1) return live;
     return live && MarketQuotes.timestamp(live.quoteTime) >= (MarketQuotes.timestamp(saved?.quoteTime || saved?.lastUpdated) || 0) ? live : saved;
   }
   function stopMarketStream() {
@@ -619,10 +626,10 @@
     }
     if (swapOpen && (swapTarget === String(symbol).toUpperCase() || sourcePriceChanged)) updateSwapPreview();
   }
-  function useQuoteConnection(origin, quotes, stream) {
+  function useQuoteConnection(origin, quotes, stream, refreshMarket=false) {
     if (quoteOrigin() !== origin) stopMarketStream();
     activeQuoteOrigin = origin;
-    applyShioajiQuotes(quotes, stream);
+    applyShioajiQuotes(quotes, stream, refreshMarket);
     if (stream) connectMarketStream();
     else stopMarketStream();
   }
@@ -642,7 +649,7 @@
           if (version !== connectionVersion) return;
           shioajiEnabled = true;
           localStorage.setItem(SHIOAJI_STORE, '1');
-          useQuoteConnection(origin, quotes, stream);
+          useQuoteConnection(origin, quotes, stream, interactive);
           return true;
         } catch (error) {
           if (version !== connectionVersion) return;
