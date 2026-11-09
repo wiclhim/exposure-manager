@@ -14,10 +14,19 @@
   let swapSymbolDebounce = null;
   const SHIOAJI_STORE = 'exposureShioajiLocal.v1';
   const SHIOAJI_REMOTE_STORE = 'exposureShioajiRemote.v1';
+  const SHIOAJI_NGROK_STORE = 'exposureShioajiNgrok.v1';
   const SHIOAJI_LOCAL = 'http://127.0.0.1:8765';
+  const SHIOAJI_NGROK = 'https://sandbag-wok-skied.ngrok-free.dev/exposure-quotes';
   let shioajiEnabled = localStorage.getItem(SHIOAJI_STORE) === '1';
   let remoteQuoteOrigin = null;
-  const quoteOrigin = () => remoteQuoteOrigin || SHIOAJI_LOCAL;
+  let ngrokToken = localStorage.getItem(SHIOAJI_NGROK_STORE) || '';
+  let activeQuoteOrigin = null;
+  let connectionVersion = 0;
+  const backupQuoteOrigin = () => remoteQuoteOrigin || SHIOAJI_LOCAL;
+  const preferredQuoteOrigin = () => ngrokToken ? SHIOAJI_NGROK : backupQuoteOrigin();
+  const quoteOrigin = () => activeQuoteOrigin || preferredQuoteOrigin();
+  const quoteConnectionName = origin => origin === SHIOAJI_NGROK ? 'ngrok' : origin === SHIOAJI_LOCAL ? '本機' : 'Tailscale';
+  const ngrokHeaders = token => ({ Authorization: 'Bearer ' + token, 'ngrok-skip-browser-warning': '1' });
   let shioajiStatus = '';
   let toastTimer = null;
   let currentPage = 'overview';
@@ -344,13 +353,17 @@
   }
   function updateApiStatusUi() {
     const ready = shioajiStatus.startsWith('已連線');
-    const status = shioajiStatus || (remoteQuoteOrigin ? '請按 ⟳ 連線遠端永豐' : '請按 ⟳ 連線本機永豐');
+    const status = shioajiStatus || '請按 ⟳ 連線永豐行情';
     $('marketStatusText').textContent = status;
     $('shioajiModeText').textContent = status;
-    $('sideStatusText').textContent = remoteQuoteOrigin ? '永豐 Shioaji 遠端報價' : '永豐 Shioaji 本機報價';
+    $('sideStatusText').textContent = '永豐 Shioaji · ' + quoteConnectionName(quoteOrigin());
     $('sideStatusSub').textContent = '市場水位即時推播 · 持倉每 60 秒同步';
     $('providerState').textContent = ready ? '已連線' : '等待行情服務';
-    $('checkApiBtn').textContent = remoteQuoteOrigin ? '重新連線遠端永豐' : '連線本機永豐';
+    $('checkApiBtn').textContent = '重新連線永豐';
+    $('pairNgrokBtn').textContent = ngrokToken ? '重新配對 ngrok' : '啟用 ngrok 預設';
+    $('ngrokPairHint').textContent = ngrokToken
+      ? '這台裝置已設定 ngrok 為預設。若連線中斷，網站會嘗試備用連線。'
+      : '首次配對時，手機先連上 Tailscale，電腦可用本機行情服務。完成後用 4G 開網站即可。';
     $('clearShioajiRemoteBtn').hidden = !remoteQuoteOrigin;
     for (const id of ['marketDot','sideStatusDot']) {
       $(id).classList.toggle('ok', ready);
@@ -367,7 +380,7 @@
     return quotes[0];
   }
   function currentQuoteSymbols(extra='') { return MarketQuotes.symbols([...MarketQuotes.marketPair(state.settings.benchmark),...state.holdings.map(h=>h.symbol),extra]); }
-  async function fetchShioajiQuotes(symbols, interactive=false, origin=quoteOrigin()) {
+  async function fetchShioajiQuotes(symbols, interactive=false, origin=quoteOrigin(), token=ngrokToken) {
     if (!interactive && origin === SHIOAJI_LOCAL) {
       const permission = await navigator.permissions?.query({ name:'loopback-network' }).catch(()=>null);
       if (permission && permission.state !== 'granted') throw new Error('請在設定頁重新檢查 API，並允許本機網路存取');
@@ -377,18 +390,51 @@
       const query = new URLSearchParams({ symbols: symbols.slice(0,100).join(',') });
       response = await fetch(origin + '/quotes?' + query, {
         cache:'no-store', credentials:'omit', redirect:'error',
-        targetAddressSpace: origin === SHIOAJI_LOCAL ? 'loopback' : 'local',
-        signal:AbortSignal.timeout(interactive ? 25000 : 5000)
+        ...(origin === SHIOAJI_NGROK ? { headers:ngrokHeaders(token) }
+          : { targetAddressSpace:origin === SHIOAJI_LOCAL ? 'loopback' : 'local' }),
+        signal:AbortSignal.timeout(origin === SHIOAJI_NGROK ? 7000 : interactive ? 25000 : 5000)
       });
     } catch {
+      if (origin === SHIOAJI_NGROK) throw new Error('ngrok 行情無法連線，請確認家中電腦的通道與行情服務已啟動');
       throw new Error(origin === SHIOAJI_LOCAL ? '無法連到本機服務，請確認服務已啟動及瀏覽器權限'
         : '無法連到家中行情服務，請確認 Tailscale 已連線，且家中電腦與行情服務都已啟動');
     }
+    if (origin === SHIOAJI_NGROK && !response.ok) throw new Error(response.status === 401
+      ? 'ngrok 行情驗證失敗，請在設定重新配對' : 'ngrok 行情服務暫時無法使用');
     if (!response.ok) throw new Error('無法讀取永豐行情服務，請確認使用相同的 Tailscale 帳號');
     const body = await response.json();
     if (body.state === 'login_error') throw new Error('本機服務登入永豐失敗');
     if (body.state !== 'connected') throw new Error('本機服務正在登入永豐，稍後再試');
     return { quotes: MarketQuotes.localBatch(body.quotes, symbols), stream: body.stream === true };
+  }
+  async function pairNgrokQuotes() {
+    const button = $('pairNgrokBtn');
+    const status = $('ngrokPairStatus');
+    const backup = backupQuoteOrigin();
+    const version = connectionVersion;
+    button.disabled = true;
+    status.textContent = '正在驗證這台裝置…';
+    try {
+      const response = await fetch(backup + '/pair-ngrok', {
+        cache:'no-store', credentials:'omit', redirect:'error',
+        targetAddressSpace:backup === SHIOAJI_LOCAL ? 'loopback' : 'local',
+        signal:AbortSignal.timeout(25000)
+      }).catch(() => { throw new Error('配對時請先連上既有的 Tailscale 或本機行情服務'); });
+      if (!response.ok) throw new Error('家中行情服務暫時無法配對 ngrok');
+      const { token } = await response.json();
+      if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('無法取得有效的配對資訊');
+      const { quotes, stream } = await fetchShioajiQuotes(currentQuoteSymbols(), true, SHIOAJI_NGROK, token);
+      if (version !== connectionVersion) throw new Error('備用連線已變更，請重新配對');
+      localStorage.setItem(SHIOAJI_NGROK_STORE, token);
+      localStorage.setItem(SHIOAJI_STORE, '1');
+      ngrokToken = token;
+      shioajiEnabled = true;
+      connectionVersion++;
+      useQuoteConnection(SHIOAJI_NGROK, quotes, stream);
+      status.textContent = '配對完成。下次開網站會自動優先使用 ngrok。';
+    } catch (error) {
+      status.textContent = error.message;
+    } finally { button.disabled = false; }
   }
   async function pairRemoteQuotes(event) {
     event.preventDefault();
@@ -403,10 +449,10 @@
       localStorage.setItem(SHIOAJI_STORE, '1');
       remoteQuoteOrigin = origin;
       shioajiEnabled = true;
-      stopMarketStream();
-      applyShioajiQuotes(quotes, stream);
-      if (stream) connectMarketStream();
-      $('shioajiPairStatus').textContent = '已儲存這台裝置的遠端連線';
+      connectionVersion++;
+      if (ngrokToken) void refreshQuotes(true);
+      else useQuoteConnection(origin, quotes, stream);
+      $('shioajiPairStatus').textContent = '已儲存這台裝置的 Tailscale 備用連線';
       if (new URLSearchParams(location.hash.slice(1)).has('shioaji')) {
         history.replaceState(null, '', location.pathname + location.search);
         setPage('overview');
@@ -418,6 +464,8 @@
   function clearRemoteQuotes() {
     localStorage.removeItem(SHIOAJI_REMOTE_STORE);
     remoteQuoteOrigin = null;
+    activeQuoteOrigin = null;
+    connectionVersion++;
     stopMarketStream();
     shioajiStatus = '';
     $('shioajiRemoteUrl').value = '';
@@ -427,8 +475,9 @@
   }
   function applyShioajiQuotes(quotes, stream) {
     quotes.forEach(quote => updateQuoteEverywhere(quote.symbol, quote));
-    shioajiStatus = marketStream && marketStream.readyState === EventSource.OPEN ? '已連線 · 永豐即時推播'
-      : stream ? '已連線 · 正在連接永豐推播' : '已連線 · 每 60 秒同步，重啟本機服務可啟用即時推播';
+    const via = ' · ' + quoteConnectionName(quoteOrigin());
+    shioajiStatus = marketStream?.readyState === 1 ? '已連線 · 永豐即時推播' + via
+      : stream ? '已連線 · 正在連接永豐推播' + via : '已連線 · 每 60 秒同步' + via;
     $('footerUpdated').textContent = shioajiStatus;
     persist();
     renderAll();
@@ -446,15 +495,69 @@
     if (marketFrame !== null) cancelAnimationFrame(marketFrame);
     marketFrame = null;
   }
+  function openNgrokStream(url) {
+    const controller = new AbortController();
+    let timer = setTimeout(() => controller.abort(), 8000);
+    let closed = false;
+    const source = {
+      readyState:0,
+      close() {
+        closed = true;
+        source.readyState = 2;
+        clearTimeout(timer);
+        controller.abort();
+      }
+    };
+    void (async () => {
+      try {
+        const response = await fetch(url, {
+          cache:'no-store', credentials:'omit', redirect:'error',
+          headers:ngrokHeaders(ngrokToken), signal:controller.signal
+        });
+        if (!response.ok || !response.headers.get('content-type')?.startsWith('text/event-stream') || !response.body) {
+          throw new Error('ngrok 推播暫時無法使用');
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let pending = '';
+        while (!closed) {
+          clearTimeout(timer);
+          timer = setTimeout(() => controller.abort(), 40000);
+          const { value, done } = await reader.read();
+          if (done) break;
+          pending += decoder.decode(value, { stream:true });
+          let end;
+          while (!closed && (end = pending.indexOf('\n\n')) !== -1) {
+            const frame = pending.slice(0, end);
+            pending = pending.slice(end + 2);
+            if (frame.startsWith('data: ')) {
+              source.readyState = 1;
+              source.onmessage?.({ data:frame.slice(6) });
+            }
+          }
+          if (pending.length > 65536) break;
+        }
+      } catch {
+        // Report the interruption through the same handler as EventSource.
+      } finally {
+        const wasClosed = closed;
+        source.close();
+        if (!wasClosed) source.onerror?.();
+      }
+    })();
+    return source;
+  }
   function connectMarketStream() {
-    if (document.hidden || typeof EventSource === 'undefined') return;
+    if (document.hidden) return;
     const symbols = MarketQuotes.marketPair(state.settings.benchmark);
     const origin = quoteOrigin();
     const key = origin + '|' + symbols.join(',');
-    if (marketStreamKey === key && marketStream?.readyState !== EventSource.CLOSED) return;
+    if (marketStreamKey === key && marketStream?.readyState !== 2) return;
     stopMarketStream();
     const query = new URLSearchParams({ symbols: symbols.join(',') });
-    const source = new EventSource(origin + '/stream?' + query);
+    const url = origin + '/stream?' + query;
+    if (origin !== SHIOAJI_NGROK && typeof EventSource === 'undefined') return;
+    const source = origin === SHIOAJI_NGROK ? openNgrokStream(url) : new EventSource(url);
     marketStream = source;
     marketStreamKey = key;
     source.onmessage = event => {
@@ -462,8 +565,9 @@
       let body;
       try { body = JSON.parse(event.data); } catch { return; }
       if (body?.state !== 'connected') return;
-      if (shioajiStatus !== '已連線 · 永豐即時推播') {
-        shioajiStatus = '已連線 · 永豐即時推播';
+      const connected = '已連線 · 永豐即時推播 · ' + quoteConnectionName(origin);
+      if (shioajiStatus !== connected) {
+        shioajiStatus = connected;
         $('footerUpdated').textContent = shioajiStatus;
         updateApiStatusUi();
       }
@@ -486,9 +590,10 @@
     };
     source.onerror = () => {
       if (marketStream !== source) return;
-      shioajiStatus = '永豐即時推播暫停 · 等待重連';
+      shioajiStatus = origin === SHIOAJI_NGROK ? 'ngrok 推播中斷 · 正在嘗試備用連線' : '永豐即時推播暫停 · 等待重連';
       $('footerUpdated').textContent = shioajiStatus;
       updateApiStatusUi();
+      if (origin === SHIOAJI_NGROK) void refreshQuotes(false, true);
     };
   }
   function indexQuoteReading() {
@@ -514,23 +619,37 @@
     }
     if (swapOpen && (swapTarget === String(symbol).toUpperCase() || sourcePriceChanged)) updateSwapPreview();
   }
-  async function refreshQuotes(interactive=false) {
+  function useQuoteConnection(origin, quotes, stream) {
+    if (quoteOrigin() !== origin) stopMarketStream();
+    activeQuoteOrigin = origin;
+    applyShioajiQuotes(quotes, stream);
+    if (stream) connectMarketStream();
+    else stopMarketStream();
+  }
+  async function refreshQuotes(interactive=false, backupOnly=false) {
     if (isRefreshing || (!interactive && !shioajiEnabled)) return;
     isRefreshing = true;
-    const origin = quoteOrigin();
+    const version = connectionVersion;
+    const backup = backupQuoteOrigin();
+    const origins = !backupOnly && ngrokToken ? [SHIOAJI_NGROK, backup] : [backup];
     try {
       const activeSwapSymbol = $('swapModal')?.classList.contains('open') ? $('swapSymbol').value : '';
-      const { quotes, stream } = await fetchShioajiQuotes(currentQuoteSymbols(activeSwapSymbol), interactive, origin);
-      if (origin !== quoteOrigin()) return;
-      shioajiEnabled = true;
-      localStorage.setItem(SHIOAJI_STORE, '1');
-      applyShioajiQuotes(quotes, stream);
-      if (stream) connectMarketStream();
-      else stopMarketStream();
-      return true;
-    } catch (error) {
-      if (origin !== quoteOrigin()) return;
-      shioajiStatus = error.message;
+      const symbols = currentQuoteSymbols(activeSwapSymbol);
+      const errors = [];
+      for (const origin of origins) {
+        try {
+          const { quotes, stream } = await fetchShioajiQuotes(symbols, interactive, origin);
+          if (version !== connectionVersion) return;
+          shioajiEnabled = true;
+          localStorage.setItem(SHIOAJI_STORE, '1');
+          useQuoteConnection(origin, quotes, stream);
+          return true;
+        } catch (error) {
+          if (version !== connectionVersion) return;
+          errors.push(error.message);
+        }
+      }
+      shioajiStatus = errors.join('。');
       updateApiStatusUi();
       return false;
     } finally { isRefreshing = false; }
@@ -541,7 +660,21 @@
   }
   function startQuoteTimer() {
     clearInterval(quoteTimer);
-    quoteTimer = setInterval(() => { if (!document.hidden) void refreshQuotes(); }, 60000);
+    let lastOffHoursRetry = 0;
+    quoteTimer = setInterval(() => {
+      if (document.hidden) return;
+      if (ngrokToken) {
+        const taipei = new Date(Date.now() + 8 * 60 * 60 * 1000);
+        const minutes = taipei.getUTCHours() * 60 + taipei.getUTCMinutes();
+        const weekdays = taipei.getUTCDay() >= 1 && taipei.getUTCDay() <= 5;
+        if (!weekdays || minutes < 530 || minutes >= 825) {
+          if (quoteOrigin() === SHIOAJI_NGROK && marketStream?.readyState === 1) return;
+          if (Date.now() - lastOffHoursRetry < 15 * 60000) return;
+          lastOffHoursRetry = Date.now();
+        }
+      }
+      void refreshQuotes();
+    }, 60000);
   }
 
   function clearHoldingForm() {
@@ -713,6 +846,7 @@
       renderMarketCard();
     });
     $('checkApiBtn').addEventListener('click',()=>refreshQuotes(true));
+    $('pairNgrokBtn').addEventListener('click', pairNgrokQuotes);
     $('shioajiPairForm').addEventListener('submit', pairRemoteQuotes);
     $('clearShioajiRemoteBtn').addEventListener('click', clearRemoteQuotes);
     document.addEventListener('visibilitychange', () => {
@@ -1115,8 +1249,14 @@
       setPage('settings');
       $('shioajiPairForm').closest('details').open = true;
       $('shioajiRemoteUrl').value = pairing;
-      $('shioajiPairStatus').textContent = '手機連上 Tailscale 後，按「儲存並連線」。若瀏覽器詢問本機網路存取，請選「允許」。';
+      $('shioajiPairStatus').textContent = '手機連上 Tailscale 後，按「儲存備用連線」。若瀏覽器詢問本機網路存取，請選「允許」。';
       $('shioajiPairForm').scrollIntoView({ block:'center' });
+    }
+    if (location.hash === '#ngrok') {
+      setPage('settings');
+      $('pairNgrokBtn').closest('details').open = true;
+      $('pairNgrokBtn').scrollIntoView({ block:'center' });
+      history.replaceState(null, '', location.pathname + location.search);
     }
     if (shioajiEnabled) void refreshQuotes();
   }

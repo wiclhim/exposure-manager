@@ -52,6 +52,8 @@
 - Windows 本機服務 scripts/shioaji-feed.py 維持一條永豐 Shioaji 行情連線。首頁的市場水位標的（預設 0050）與加權指數在頁面可見時即時接收本機推播，持倉表每 60 秒同步同一份快取。
 - 服務只聆聽 127.0.0.1:8765，跨來源只允許正式網站讀取。首次使用在設定按「連線本機永豐」，並依瀏覽器提示允許本機網路。休市或停機時顯示既有最後一筆報價及其時間。
 - 手機使用同一個 Tailscale 帳號，透過家中 Windows 電腦上的 Tailscale Serve HTTPS 代理讀取報價。服務需設定 EXPOSURE_TAILSCALE_HOST（電腦的完整 MagicDNS 名稱）與 EXPOSURE_TAILSCALE_LOGIN（允許的帳號 LoginName）。服務只接受該帳號與主機的 Serve 請求。手機在「設定 → 進階設定與行情連線 → 手機遠端行情」儲存 HTTPS 網址，電腦和行情服務須保持運作。
+- 在「設定 → 進階設定與行情連線」按「啟用 ngrok 預設」，透過既有本機或 Tailscale 驗證這台裝置。之後前景頁面優先用 ngrok，連不上時嘗試保存的 Tailscale 備用網址或本機服務。家中電腦須執行行情服務及 ngrok。
+- ngrok 通道僅提供經驗證的行情快照及串流。行情服務由 EXPOSURE_NGROK_TOKEN_FILE 讀取獨立唯讀憑證，與本機 ngrok 閘道共用。裝置配對只走本機或已驗證的 Tailscale，憑證以 Authorization 標頭傳送。保護憑證檔並留在本機，避免放入版本控制或網址。
 - 啟動本機服務需 Python 3.10+ 與 shioaji 1.7.11。程式從 stdin 讀取包含 api_key 和 secret_key 的 JSON，使用僅有「行情／資料」權限的金鑰，以模擬模式登入並停用委託／成交訂閱。請用本機安全儲存或互動提示供應金鑰。
 - 加權指數圖和 KD、RSI、MACD、Beta 規則使用臺灣證券交易所的收盤日線。既有 0050 走勢與持倉 52 週還原高點仍可瀏覽，並保留資料日期。股票還原日 K 與個股 Beta 自動估算待驗證後再啟用。
 

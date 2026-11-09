@@ -5,10 +5,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from math import isfinite
 import os
+from pathlib import Path
 from queue import Queue
 import re
 import sys
 from threading import BoundedSemaphore, Condition, Thread
+from time import sleep
 from urllib.parse import parse_qs, urlsplit
 
 import shioaji as sj
@@ -126,6 +128,7 @@ def serve(keys):
     stream_slots = BoundedSemaphore(12)
     remote_host = os.environ.get("EXPOSURE_TAILSCALE_HOST")
     remote_login = os.environ.get("EXPOSURE_TAILSCALE_LOGIN")
+    token_path = os.environ.get("EXPOSURE_NGROK_TOKEN_FILE")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -136,6 +139,23 @@ def serve(keys):
             target = urlsplit(self.path)
             if not allowed_request(self.headers, remote_host, remote_login):
                 self.send_error(403)
+                return
+            if target.path == "/pair-ngrok":
+                if origin != SITE or target.query:
+                    self.send_error(403)
+                    return
+                try:
+                    token = Path(token_path).read_text(encoding="ascii").strip() if token_path else ""
+                except OSError:
+                    token = ""
+                if not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+                    self.send_error(503)
+                    return
+                body = json.dumps({"token": token}).encode("ascii")
+                self.quote_headers(origin, "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
                 return
             if target.path not in ("/quotes", "/stream"):
                 self.send_error(404)
@@ -153,7 +173,8 @@ def serve(keys):
                     self.send_error(503)
                     return
                 try:
-                    self.stream_quotes(origin, symbols)
+                    interval = 2 if parse_qs(target.query).get("interval") == ["2"] else 0
+                    self.stream_quotes(origin, symbols, interval)
                 finally:
                     stream_slots.release()
                 return
@@ -172,7 +193,7 @@ def serve(keys):
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
 
-        def stream_quotes(self, origin, symbols):
+        def stream_quotes(self, origin, symbols, interval):
             self.quote_headers(origin, "text/event-stream; charset=utf-8")
             self.end_headers()
             self.connection.settimeout(5)
@@ -183,6 +204,8 @@ def serve(keys):
                     frame = ": heartbeat\n\n" if snapshot == previous else "data: " + json.dumps(snapshot, ensure_ascii=False) + "\n\n"
                     self.wfile.write(frame.encode("utf-8"))
                     self.wfile.flush()
+                    if snapshot != previous and interval:
+                        sleep(interval)
                     previous = snapshot
                     snapshot = feed.next_snapshot(symbols, previous)
             except OSError:
