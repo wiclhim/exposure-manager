@@ -4,6 +4,15 @@
   const symbol=value=>String(value||'').trim().toUpperCase();
   const symbols=values=>[...new Set(values.map(symbol).filter(s=>/^[A-Z0-9.-]{1,12}$/.test(s)))];
   const marketPair=benchmark=>symbols([symbol(benchmark)||'0050',INDEX]);
+  function privateOrigin(value) {
+    try {
+      const url = new URL(String(value || '').trim());
+      const tailscaleHost = /^[a-z0-9-]+\.[a-z0-9-]+\.ts\.net$/;
+      if (url.protocol !== 'https:' || !tailscaleHost.test(url.hostname) || url.port ||
+          url.username || url.password || url.pathname !== '/' || url.search || url.hash) return null;
+      return url.origin;
+    } catch { return null; }
+  }
   function timestamp(value){
     if(!value)return null;
     const n=Number(value);
@@ -19,5 +28,5 @@
     const p=Number(price),h=Number(high);
     return Number.isFinite(p)&&Number.isFinite(h)&&p>0&&h>0?Math.max(0,(h-p)/p*100):null;
   }
-  return {INDEX,symbol,symbols,marketPair,timestamp,localBatch,gainToHigh};
+  return {INDEX,symbol,symbols,marketPair,privateOrigin,timestamp,localBatch,gainToHigh};
 });

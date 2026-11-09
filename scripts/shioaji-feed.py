@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from math import isfinite
+import os
 from queue import Queue
 import re
 import sys
@@ -18,6 +19,20 @@ SITE = "https://exposure-manager.vercel.app"
 INDEX = "IX0001"
 MAX_SYMBOLS = 100
 TAIPEI = timezone(timedelta(hours=8))
+
+
+def allowed_request(headers, remote_host, remote_login):
+    host = headers.get("Host")
+    forwarded = headers.get("X-Forwarded-Host")
+    if headers.get("Origin") not in (None, SITE):
+        return False
+    if host == f"127.0.0.1:{PORT}" and forwarded is None:
+        return True
+    return bool(
+        remote_host and remote_login and host == forwarded == remote_host
+        and headers.get("X-Forwarded-Proto") == "https"
+        and headers.get("Tailscale-User-Login") == remote_login
+    )
 
 
 class QuoteFeed:
@@ -109,6 +124,8 @@ def serve(keys):
     feed = QuoteFeed()
     feed.read(["0050", INDEX])
     stream_slots = BoundedSemaphore(12)
+    remote_host = os.environ.get("EXPOSURE_TAILSCALE_HOST")
+    remote_login = os.environ.get("EXPOSURE_TAILSCALE_LOGIN")
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -117,7 +134,7 @@ def serve(keys):
         def do_GET(self):
             origin = self.headers.get("Origin")
             target = urlsplit(self.path)
-            if self.headers.get("Host") != f"127.0.0.1:{PORT}" or origin not in (None, SITE):
+            if not allowed_request(self.headers, remote_host, remote_login):
                 self.send_error(403)
                 return
             if target.path not in ("/quotes", "/stream"):

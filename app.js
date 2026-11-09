@@ -13,7 +13,11 @@
   const liveMarketQuotes = new Map();
   let swapSymbolDebounce = null;
   const SHIOAJI_STORE = 'exposureShioajiLocal.v1';
+  const SHIOAJI_REMOTE_STORE = 'exposureShioajiRemote.v1';
+  const SHIOAJI_LOCAL = 'http://127.0.0.1:8765';
   let shioajiEnabled = localStorage.getItem(SHIOAJI_STORE) === '1';
+  let remoteQuoteOrigin = null;
+  const quoteOrigin = () => remoteQuoteOrigin || SHIOAJI_LOCAL;
   let shioajiStatus = '';
   let toastTimer = null;
   let currentPage = 'overview';
@@ -328,6 +332,7 @@
     $('targetLever').value = state.settings.target.lever;
     $('targetCore').value = state.settings.target.core;
     $('targetCash').value = state.settings.target.cash;
+    $('shioajiRemoteUrl').value = remoteQuoteOrigin || '';
     updateTargetTotal();
     updateApiStatusUi();
   }
@@ -339,12 +344,14 @@
   }
   function updateApiStatusUi() {
     const ready = shioajiStatus.startsWith('已連線');
-    const status = shioajiStatus || '請按 ⟳ 連線本機永豐';
+    const status = shioajiStatus || (remoteQuoteOrigin ? '請按 ⟳ 連線遠端永豐' : '請按 ⟳ 連線本機永豐');
     $('marketStatusText').textContent = status;
     $('shioajiModeText').textContent = status;
-    $('sideStatusText').textContent = '永豐 Shioaji 本機報價';
+    $('sideStatusText').textContent = remoteQuoteOrigin ? '永豐 Shioaji 遠端報價' : '永豐 Shioaji 本機報價';
     $('sideStatusSub').textContent = '市場水位即時推播 · 持倉每 60 秒同步';
-    $('providerState').textContent = ready ? '已連線' : '等待本機服務';
+    $('providerState').textContent = ready ? '已連線' : '等待行情服務';
+    $('checkApiBtn').textContent = remoteQuoteOrigin ? '重新連線遠端永豐' : '連線本機永豐';
+    $('clearShioajiRemoteBtn').hidden = !remoteQuoteOrigin;
     for (const id of ['marketDot','sideStatusDot']) {
       $(id).classList.toggle('ok', ready);
       $(id).classList.toggle('bad', !ready);
@@ -360,25 +367,63 @@
     return quotes[0];
   }
   function currentQuoteSymbols(extra='') { return MarketQuotes.symbols([...MarketQuotes.marketPair(state.settings.benchmark),...state.holdings.map(h=>h.symbol),extra]); }
-  async function fetchShioajiQuotes(symbols, interactive=false) {
-    if (!interactive) {
+  async function fetchShioajiQuotes(symbols, interactive=false, origin=quoteOrigin()) {
+    if (!interactive && origin === SHIOAJI_LOCAL) {
       const permission = await navigator.permissions?.query({ name:'loopback-network' }).catch(()=>null);
       if (permission && permission.state !== 'granted') throw new Error('請在設定頁重新檢查 API，並允許本機網路存取');
     }
     let response;
     try {
       const query = new URLSearchParams({ symbols: symbols.slice(0,100).join(',') });
-      response = await fetch('http://127.0.0.1:8765/quotes?' + query, {
-        cache:'no-store', credentials:'omit', signal:AbortSignal.timeout(interactive ? 25000 : 5000)
+      response = await fetch(origin + '/quotes?' + query, {
+        cache:'no-store', credentials:'omit', redirect:'error',
+        targetAddressSpace: origin === SHIOAJI_LOCAL ? 'loopback' : 'local',
+        signal:AbortSignal.timeout(interactive ? 25000 : 5000)
       });
     } catch {
-      throw new Error('無法連到本機服務，請確認服務已啟動及瀏覽器權限');
+      throw new Error(origin === SHIOAJI_LOCAL ? '無法連到本機服務，請確認服務已啟動及瀏覽器權限'
+        : '無法連到家中行情服務，請確認 Tailscale 已連線，且家中電腦與行情服務都已啟動');
     }
-    if (!response.ok) throw new Error('本機行情服務無法讀取');
+    if (!response.ok) throw new Error('無法讀取永豐行情服務，請確認使用相同的 Tailscale 帳號');
     const body = await response.json();
     if (body.state === 'login_error') throw new Error('本機服務登入永豐失敗');
     if (body.state !== 'connected') throw new Error('本機服務正在登入永豐，稍後再試');
     return { quotes: MarketQuotes.localBatch(body.quotes, symbols), stream: body.stream === true };
+  }
+  async function pairRemoteQuotes(event) {
+    event.preventDefault();
+    const origin = MarketQuotes.privateOrigin($('shioajiRemoteUrl').value);
+    if (!origin) return notify('請輸入家中電腦的 Tailscale HTTPS 網址');
+    const button = $('pairShioajiBtn');
+    button.disabled = true;
+    $('shioajiPairStatus').textContent = '正在連線家中行情服務…';
+    try {
+      const { quotes, stream } = await fetchShioajiQuotes(currentQuoteSymbols(), true, origin);
+      localStorage.setItem(SHIOAJI_REMOTE_STORE, origin);
+      localStorage.setItem(SHIOAJI_STORE, '1');
+      remoteQuoteOrigin = origin;
+      shioajiEnabled = true;
+      stopMarketStream();
+      applyShioajiQuotes(quotes, stream);
+      if (stream) connectMarketStream();
+      $('shioajiPairStatus').textContent = '已儲存這台裝置的遠端連線';
+      if (new URLSearchParams(location.hash.slice(1)).has('shioaji')) {
+        history.replaceState(null, '', location.pathname + location.search);
+        setPage('overview');
+      }
+    } catch (error) {
+      $('shioajiPairStatus').textContent = error.message;
+    } finally { button.disabled = false; }
+  }
+  function clearRemoteQuotes() {
+    localStorage.removeItem(SHIOAJI_REMOTE_STORE);
+    remoteQuoteOrigin = null;
+    stopMarketStream();
+    shioajiStatus = '';
+    $('shioajiRemoteUrl').value = '';
+    $('shioajiPairStatus').textContent = '';
+    updateApiStatusUi();
+    void refreshQuotes(true);
   }
   function applyShioajiQuotes(quotes, stream) {
     quotes.forEach(quote => updateQuoteEverywhere(quote.symbol, quote));
@@ -404,11 +449,12 @@
   function connectMarketStream() {
     if (document.hidden || typeof EventSource === 'undefined') return;
     const symbols = MarketQuotes.marketPair(state.settings.benchmark);
-    const key = symbols.join(',');
+    const origin = quoteOrigin();
+    const key = origin + '|' + symbols.join(',');
     if (marketStreamKey === key && marketStream?.readyState !== EventSource.CLOSED) return;
     stopMarketStream();
-    const query = new URLSearchParams({ symbols: key });
-    const source = new EventSource('http://127.0.0.1:8765/stream?' + query);
+    const query = new URLSearchParams({ symbols: symbols.join(',') });
+    const source = new EventSource(origin + '/stream?' + query);
     marketStream = source;
     marketStreamKey = key;
     source.onmessage = event => {
@@ -471,9 +517,11 @@
   async function refreshQuotes(interactive=false) {
     if (isRefreshing || (!interactive && !shioajiEnabled)) return;
     isRefreshing = true;
+    const origin = quoteOrigin();
     try {
       const activeSwapSymbol = $('swapModal')?.classList.contains('open') ? $('swapSymbol').value : '';
-      const { quotes, stream } = await fetchShioajiQuotes(currentQuoteSymbols(activeSwapSymbol), interactive);
+      const { quotes, stream } = await fetchShioajiQuotes(currentQuoteSymbols(activeSwapSymbol), interactive, origin);
+      if (origin !== quoteOrigin()) return;
       shioajiEnabled = true;
       localStorage.setItem(SHIOAJI_STORE, '1');
       applyShioajiQuotes(quotes, stream);
@@ -481,6 +529,7 @@
       else stopMarketStream();
       return true;
     } catch (error) {
+      if (origin !== quoteOrigin()) return;
       shioajiStatus = error.message;
       updateApiStatusUi();
       return false;
@@ -664,6 +713,8 @@
       renderMarketCard();
     });
     $('checkApiBtn').addEventListener('click',()=>refreshQuotes(true));
+    $('shioajiPairForm').addEventListener('submit', pairRemoteQuotes);
+    $('clearShioajiRemoteBtn').addEventListener('click', clearRemoteQuotes);
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) stopMarketStream();
       else void refreshQuotes();
@@ -1056,8 +1107,17 @@
   }
 
   function init() {
+    remoteQuoteOrigin = MarketQuotes.privateOrigin(localStorage.getItem(SHIOAJI_REMOTE_STORE));
     initCashEditor(); initFamiliarSettings(); bindEvents(); renderAll(); renderSettings();
     updateApiStatusUi(); startQuoteTimer();
+    const pairing = MarketQuotes.privateOrigin(new URLSearchParams(location.hash.slice(1)).get('shioaji'));
+    if (pairing) {
+      setPage('settings');
+      $('shioajiPairForm').closest('details').open = true;
+      $('shioajiRemoteUrl').value = pairing;
+      $('shioajiPairStatus').textContent = '手機連上 Tailscale 後，按「儲存並連線」。若瀏覽器詢問本機網路存取，請選「允許」。';
+      $('shioajiPairForm').scrollIntoView({ block:'center' });
+    }
     if (shioajiEnabled) void refreshQuotes();
   }
   window.exposureRiskBridge={getTarget:()=>Number(state.settings.targetBeta),setTarget:value=>{if(!Number.isFinite(value)||value<0||value>5)return;saveFamiliarValue('targetBeta',value);renderSettings();notify('已更新目標 Beta，請至再平衡頁確認調整。');}};
