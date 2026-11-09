@@ -77,9 +77,9 @@
   async function refresh(force=false){
     $('indexSignalsRefresh').disabled=true;
     try{
-      if(!force){const cached=JSON.parse(sessionStorage.getItem('exposureIndexCache')||'null');if(cached&&Date.now()-cached.at<3600000){payload=cached.payload;render();return;}}
+      if(!force){const cached=JSON.parse(sessionStorage.getItem('exposureIndexCache.v2')||'null');if(cached&&Date.now()-cached.at<3600000){payload=cached.payload;render();return;}}
       const response=await fetch('/api/index-signals'),data=await response.json();if(!response.ok)throw new Error(data.error||'讀取失敗');
-      payload=data;sessionStorage.setItem('exposureIndexCache',JSON.stringify({at:Date.now(),payload}));render();
+      payload=data;sessionStorage.setItem('exposureIndexCache.v2',JSON.stringify({at:Date.now(),payload}));render();
     }catch(e){$('indexSignalsStatus').textContent=`加權指數更新失敗：${e.message}。暫不產生新建議。`;$('indexSignalsContent').innerHTML='';}
     finally{$('indexSignalsRefresh').disabled=false;}
   }

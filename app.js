@@ -5,26 +5,12 @@
     holdings: [], cash: 0, history: [], quoteCache: {}, marketHistory: null, holdingHighs: {},
     settings: { targetBeta: 1, tolerance: 10, target: { lever: 20, core: 60, cash: 20 }, refreshSeconds: 60, benchmark: '0050' }
   };
-  let apiConfigured = false;
   let isRefreshing = false;
   let quoteTimer = null;
-  let fugleSocket = null;
-  let wsRetryTimer = null;
-  let wsRetryDelay = 3000;
-  let wsSymbols = new Set();
-  let wsLockTask = null;
-  let releaseWsLock = null;
-  let wsShouldRun = false;
-  let rateUsageTimer = null;
   let swapSymbolDebounce = null;
-  const quoteRequestsInFlight = new Map();
-  const historyRequestsInFlight = new Map();
-  const holdingHighRetry = new Map();
-  let isRefreshingHoldingHighs = false;
-  const HISTORY_TTL = 12*60*60*1000;
-  let lastRateLimitNoticeAt = 0;
-  let apiRateUsage = { configured:false, used:null, limit:40, remaining:null };
-  const WS_KEY_STORE = 'exposureFugleWsKey.v1';
+  const SHIOAJI_STORE = 'exposureShioajiLocal.v1';
+  let shioajiEnabled = localStorage.getItem(SHIOAJI_STORE) === '1';
+  let shioajiStatus = '';
   let toastTimer = null;
   let currentPage = 'overview';
   let marketRangeMonths = 1;
@@ -191,12 +177,12 @@
       $('marketBarFill').style.width = `${Math.max(0, Math.min(100, price / high * 100))}%`;
       $('marketPrice').textContent = money2(price); $('marketHigh').textContent = money2(high); $('marketHighDate').textContent = `高點日期 ${h.highDate || '—'}`;
       $('marketQuoteTime').textContent = q ? fmtTime(q.quoteTime || q.lastUpdated) : '尚無報價';
-      $('marketSourceText').textContent = `資料來源：Fugle 報價／還原日 K · ${h.to || ''}`;
+      $('marketSourceText').textContent = `報價：${q?.source || '既有報價'} · 還原日 K 備份 ${h.to || ''}`;
     } else {
       $('marketDistance').textContent = '—'; $('marketZone').textContent = h ? '等待即時報價' : '等待歷史高點資料';
       $('marketPrice').textContent = price ? money2(price) : '—'; $('marketHigh').textContent = high ? money2(high) : '—';
       $('marketHighDate').textContent = h ? `高點日期 ${h.highDate}` : '—'; $('marketQuoteTime').textContent = q ? fmtTime(q.quoteTime || q.lastUpdated) : '尚無報價';
-      $('marketSourceText').textContent = apiConfigured ? '資料來源：Fugle' : '資料來源：尚未連線';
+      $('marketSourceText').textContent = '報價：' + (q?.source || '永豐 Shioaji（等待報價）');
     }
   }
   function renderMarketChart(history, quote) {
@@ -253,7 +239,7 @@
     body.innerHTML = rows.map(h => {
       const q = h.quote || state.quoteCache[h.symbol];
       const qError = state.quoteCache[h.symbol]?.error;
-      const qText = qError ? (q ? '更新失敗，沿用上次價' : '報價失敗') : q ? (isTaiwanMarketOpen() ? '盤中最後成交' : '盤後最後成交') : (apiConfigured ? '等待報價' : '手動價格');
+      const qText = qError ? (q ? '更新失敗，沿用上次價' : '報價失敗') : q ? (isTaiwanMarketOpen() ? '盤中最後成交' : '盤後最後成交') : '等待永豐報價';
       const qClass = q && !qError ? 'live' : '';
       return `<tr><td><div class="asset-cell"><div class="asset-avatar">${escapeHtml(String(h.symbol).slice(0,4))}</div><div class="asset-name"><strong>${escapeHtml(h.name || h.symbol)}</strong><small>${escapeHtml(h.symbol)}</small></div></div></td><td><span class="tag ${categoryClass(h.category)}">${categoryName(h.category)}</span></td><td class="right">${number(h.quantity)}</td><td class="right">${money2(h.cost || 0)}</td><td class="right">${priceOf(h) ? money2(priceOf(h)) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${betaFmt(h.beta)}</td><td><span class="quote-status ${qClass}" title="${q ? `更新 ${fmtTime(q.quoteTime || q.lastUpdated)}` : ''}">${qText}</span></td><td><button class="table-action" data-edit="${h.id}">編輯</button> <button class="table-action danger" data-delete="${h.id}">刪除</button></td></tr>`;
     }).join('');
@@ -338,10 +324,6 @@
     $('targetLever').value = state.settings.target.lever;
     $('targetCore').value = state.settings.target.core;
     $('targetCash').value = state.settings.target.cash;
-    $('refreshSeconds').value = String(state.settings.refreshSeconds || 60);
-    $('wsApiKey').value = localStorage.getItem(WS_KEY_STORE) || '';
-    $('wsStateText').textContent = localStorage.getItem(WS_KEY_STORE) ? 'WebSocket Key 已儲存在本機，等待連線。' : '請輸入 Fugle API Key 啟用最多 5 檔 WebSocket。';
-    $('benchmarkSymbol').value = state.settings.benchmark || '0050';
     updateTargetTotal();
     updateApiStatusUi();
   }
@@ -352,92 +334,61 @@
     $('allocationValidation').textContent = total === 100 ? '目標配置合計正確。' : '三項比例合計必須為 100%。';
   }
   function updateApiStatusUi() {
-    const guardReady = Boolean(apiRateUsage.configured && apiRateUsage.available !== false);
-    const serviceReady = apiConfigured && guardReady;
-    $('providerState').textContent = !apiConfigured ? '未設定' : guardReady ? '已啟用保護' : '缺少計數器';
-    $('providerState').style.background = serviceReady ? '#e9f8f2' : '#fff5e8';
-    $('providerState').style.color = serviceReady ? '#14966d' : '#b67b2c';
-    $('apiStateBox').textContent = !apiConfigured ? '目前未偵測到 FUGLE_API_KEY。持倉仍可用手動價格操作；請在 Vercel 設定 FUGLE_API_KEY。' : (guardReady ? 'FUGLE_API_KEY 已設定。REST 請求由 Upstash Redis 全域滑動視窗計數器控管（40 次／60 秒）；計數器失效時會停止呼叫 Fugle。' : apiRateUsage.configured ? 'Upstash Redis 額度計數器目前無法連線；為避免超額，Fugle REST 查詢已暫停。' : '已偵測到 Fugle API Key，但尚未設定 Upstash Redis 全域計數器；為避免額度超限，所有 Fugle REST 查詢目前都會被後端擋下。');
-    const status = !apiConfigured ? '行情來源尚未設定' : guardReady ? 'Fugle 行情與額度保護已就緒' : '缺少 Redis 額度保護，REST 已暫停';
+    const ready = shioajiStatus.startsWith('已連線');
+    const status = shioajiStatus || '請按 ⟳ 連線本機永豐';
     $('marketStatusText').textContent = status;
-    $('sideStatusText').textContent = serviceReady ? '行情 API 已就緒' : apiConfigured ? '等待設定額度保護' : '目前使用手動價格';
-    $('sideStatusSub').textContent = apiConfigured ? `WebSocket + REST 每 60 秒 · REST 上限 40 次／分鐘` : '設定 FUGLE_API_KEY 以啟用台股報價';
-    $('marketDot').classList.toggle('ok', serviceReady); $('marketDot').classList.toggle('bad', !serviceReady);
-    $('sideStatusDot').classList.toggle('ok', serviceReady); $('sideStatusDot').classList.toggle('bad', !serviceReady);
+    $('shioajiModeText').textContent = status;
+    $('sideStatusText').textContent = '永豐 Shioaji 本機報價';
+    $('sideStatusSub').textContent = '盤中推播 · 每 60 秒同步';
+    $('providerState').textContent = ready ? '已連線' : '等待本機服務';
+    for (const id of ['marketDot','sideStatusDot']) {
+      $(id).classList.toggle('ok', ready);
+      $(id).classList.toggle('bad', !ready);
+    }
   }
   function renderAll() { syncModelTargets(); renderOverview(); if(currentPage==='holdings')renderHoldings(); if(currentPage==='rebalance')renderRebalance(); if(currentPage==='history')renderHistory(); if(currentPage==='settings'){renderFamiliarSummary();refreshFamiliarHoldingValues();} }
 
-  async function checkApiStatus() {
-    try {
-      const r = await fetch('/api/status', { cache:'no-store' });
-      const data = await r.json(); apiConfigured = Boolean(r.ok && data.configured);
-      apiRateUsage.configured = Boolean(data.rateLimiterConfigured);
-    } catch { apiConfigured = false; apiRateUsage.configured = false; }
-    updateApiStatusUi();
-    await refreshRateLimitUsage();
-    if (apiConfigured) {
-      await Promise.all([refreshQuotes(), refreshMarketHistory(false)]);
-      startQuoteTimer();
-    } else {
-      stopQuoteTimer(); renderAll();
-    }
-  }
-  function acceptRateHeaders(response) {
-    const used = Number(response.headers.get('X-RateLimit-Used'));
-    const limit = Number(response.headers.get('X-RateLimit-Limit')) || 40;
-    const remaining = Number(response.headers.get('X-RateLimit-Remaining'));
-    if (Number.isFinite(used)) {
-      apiRateUsage = { ...apiRateUsage, configured:true, used, limit, remaining:Number.isFinite(remaining)?remaining:Math.max(0,limit-used) };
-      renderRateLimitUsage();
-    }
-  }
-  function renderRateLimitUsage() {
-    const el = $('restUsageBox'); if (!el) return;
-    if (!apiRateUsage.configured) {
-      el.textContent = 'REST 全域計數器尚未設定。請在 Vercel 新增 UPSTASH_REDIS_REST_URL 與 UPSTASH_REDIS_REST_TOKEN；未設定時後端會停止 Fugle REST 請求。';
-      return;
-    }
-    if (apiRateUsage.available === false) { el.textContent = `REST 全域計數器暫時無法讀取（${apiRateUsage.error || '連線異常'}）；後端已採 fail-closed，不會繼續呼叫 Fugle。`; return; }
-    if (apiRateUsage.used == null) { el.textContent = 'REST 全域用量：正在讀取 Upstash 計數器…'; return; }
-    el.textContent = `REST 全域用量（最近 60 秒）：${apiRateUsage.used} / ${apiRateUsage.limit} 次 · 剩餘 ${apiRateUsage.remaining} 次。達 40 次時系統會停止新的 Fugle REST 查詢。`;
-  }
-  async function refreshRateLimitUsage() {
-    try {
-      const r = await fetch('/api/usage', { cache:'no-store' });
-      const data = await r.json();
-      apiRateUsage = { ...apiRateUsage, ...data };
-    } catch { apiRateUsage = { ...apiRateUsage, available:false }; }
-    renderRateLimitUsage();
-    if (apiConfigured) updateApiStatusUi();
-  }
   async function fetchQuote(symbol) {
-    const normalized = String(symbol || '').trim().toUpperCase();
+    const normalized = MarketQuotes.symbol(symbol);
     if (!normalized) throw new Error('股票代號不可空白');
-    if (quoteRequestsInFlight.has(normalized)) return quoteRequestsInFlight.get(normalized);
-    const task = (async () => {
-      const r = await fetch(`/api/quote?symbol=${encodeURIComponent(normalized)}`, { cache:'no-store' });
-      acceptRateHeaders(r);
-      const body = await r.json().catch(()=>({}));
-      if (!r.ok) {
-        if (body.code === 'FUGLE_REST_RATE_LIMIT' || body.code === 'RATE_LIMITER_UNAVAILABLE' || body.code === 'RATE_LIMITER_NOT_CONFIGURED') {
-          if (Date.now() - lastRateLimitNoticeAt > 15000) { notify(body.error || 'REST 額度保護已暫停查詢'); lastRateLimitNoticeAt = Date.now(); }
-          await refreshRateLimitUsage();
-        }
-        const error = new Error(body.error || `報價錯誤 ${r.status}`);
-        error.code = body.code || '';
-        throw error;
-      }
-      return body;
-    })();
-    quoteRequestsInFlight.set(normalized, task);
-    try { return await task; } finally { quoteRequestsInFlight.delete(normalized); }
+    const quotes = await fetchShioajiQuotes([normalized], true);
+    if (!quotes.length) throw new Error('等待永豐推播此標的的報價');
+    return quotes[0];
   }
   function currentQuoteSymbols(extra='') { return MarketQuotes.symbols([...MarketQuotes.marketPair(state.settings.benchmark),...state.holdings.map(h=>h.symbol),extra]); }
+  async function fetchShioajiQuotes(symbols, interactive=false) {
+    if (!interactive) {
+      const permission = await navigator.permissions?.query({ name:'loopback-network' }).catch(()=>null);
+      if (permission && permission.state !== 'granted') throw new Error('請在設定頁重新檢查 API，並允許本機網路存取');
+    }
+    let response;
+    try {
+      const query = new URLSearchParams({ symbols: symbols.slice(0,100).join(',') });
+      response = await fetch('http://127.0.0.1:8765/quotes?' + query, {
+        cache:'no-store', credentials:'omit', signal:AbortSignal.timeout(interactive ? 25000 : 5000)
+      });
+    } catch {
+      throw new Error('無法連到本機服務，請確認服務已啟動及瀏覽器權限');
+    }
+    if (!response.ok) throw new Error('本機行情服務無法讀取');
+    const body = await response.json();
+    if (body.state === 'login_error') throw new Error('本機服務登入永豐失敗');
+    if (body.state !== 'connected') throw new Error('本機服務正在登入永豐，稍後再試');
+    return MarketQuotes.localBatch(body.quotes, symbols);
+  }
+  function applyShioajiQuotes(quotes) {
+    quotes.forEach(quote => updateQuoteEverywhere(quote.symbol, quote));
+    shioajiStatus = quotes.length ? '已連線 · 永豐行情 ' + quotes.length + ' 檔' : '已連線 · 等待永豐推播';
+    $('footerUpdated').textContent = shioajiStatus;
+    persist();
+    renderAll();
+    updateApiStatusUi();
+  }
   function indexQuoteReading() {
     const q=state.quoteCache[MarketQuotes.INDEX],price=Number(q?.price);
     if(!Number.isFinite(price)||price<=0)return null;
     const timestamp=q.quoteTime||q.lastUpdated,ms=MarketQuotes.timestamp(timestamp);
-    return {price,time:fmtTime(timestamp),date:q.date||(ms?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms)):null),source:q.source||'Fugle'};
+    return {price,time:fmtTime(timestamp),date:q.date||(ms?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms)):null),source:q.source||'既有報價'};
   }
   function updateQuoteEverywhere(symbol, quote) {
     const previous=state.quoteCache[symbol],older=MarketQuotes.timestamp(quote.quoteTime||quote.lastUpdated),newer=MarketQuotes.timestamp(previous?.quoteTime||previous?.lastUpdated);
@@ -452,187 +403,39 @@
       $('swapPrice').value = Number(quote.price || 0).toFixed(2);
       if (!$('swapName').value) $('swapName').value = quote.name || symbol;
       const quoteAt = quote.quoteTime || quote.lastUpdated;
-      $('swapQuoteStamp').textContent = `新標的報價 ${money2(quote.price)} · ${fmtTime(quoteAt)} · ${quote.source || 'Fugle'}`;
+      $('swapQuoteStamp').textContent = `新標的報價 ${money2(quote.price)} · ${fmtTime(quoteAt)} · ${quote.source || '既有報價'}`;
     }
     if (swapOpen && (swapTarget === String(symbol).toUpperCase() || sourcePriceChanged)) updateSwapPreview();
   }
-  function connectFugleWebSocket() {
-    const key = localStorage.getItem(WS_KEY_STORE);
-    if (!key || !apiConfigured || !('WebSocket' in window)) { $('wsStateText').textContent = 'WebSocket 未啟用，將使用 REST。'; return; }
-    if (fugleSocket && (fugleSocket.readyState === WebSocket.OPEN || fugleSocket.readyState === WebSocket.CONNECTING)) return;
-    const plan=MarketQuotes.subscriptions(state.holdings.slice().sort((a,b)=>marketValue(b)-marketValue(a)).map(h=>h.symbol),state.settings.benchmark);
-    const requested=new Set(plan.map(item=>item.symbol)),pair=MarketQuotes.marketPair(state.settings.benchmark);
-    clearTimeout(wsRetryTimer);
-    wsShouldRun = true;
-
-    const openSocketAndHoldLock = () => new Promise((resolve, reject) => {
-      let socket;
-      try { socket = new WebSocket('wss://api.fugle.tw/marketdata/v1.0/stock/streaming'); }
-      catch (error) { reject(error); return; }
-      fugleSocket = socket;
-      wsSymbols.clear();
-      const pendingPair=new Map();
-      $('wsStateText').textContent = `WebSocket 連線中：${[...requested].join('、')}（最多 5 檔）`;
-      socket.onopen = () => socket.send(JSON.stringify({event:'auth',data:{apikey:key}}));
-      socket.onmessage = event => {
-        if(fugleSocket!==socket||!wsShouldRun)return;
-        let msg; try { msg = JSON.parse(event.data); } catch { return; }
-        if (msg.event === 'authenticated') {
-          plan.forEach(data=>socket.send(JSON.stringify({event:'subscribe',data})));
-          $('wsStateText').textContent = `WebSocket 已驗證，等待 ${[...requested].join('、')} 的推播；尚未收到資料的標的沿用 REST。`;
-          wsRetryDelay = 3000;
-        } else if (msg.event === 'snapshot' || msg.event === 'data') {
-          const quote=MarketQuotes.fromStream(msg);
-          if(!quote||!requested.has(quote.symbol))return;
-          const symbol=quote.symbol;
-          wsSymbols.add(symbol);
-          if(pair.includes(symbol)){
-            pendingPair.set(symbol,quote);
-            // Both homepage prices use REST until each stream supplies a valid quote.
-            if(!pair.every(s=>wsSymbols.has(s)))return;
-            for(const [s,q] of pendingPair)updateQuoteEverywhere(s,q);
-            pendingPair.clear();
-          }else updateQuoteEverywhere(symbol,quote);
-          $('wsStateText').textContent=`WebSocket 推播：${[...wsSymbols].filter(s=>!pair.includes(s)||pair.every(p=>wsSymbols.has(p))).join('、')}；其餘使用 REST。`;
-          persist(); renderAll();
-          $('footerUpdated').textContent = `WebSocket ${symbol} 更新 ${fmtTime(quote.quoteTime||quote.lastUpdated)}`;
-        } else if (msg.event === 'error') {
-          const symbol=MarketQuotes.symbol(msg.data?.symbol);
-          if(symbol)wsSymbols.delete(symbol);else wsSymbols.clear();
-          if(!symbol||pair.includes(symbol))pendingPair.clear();
-          $('wsStateText').textContent = `WebSocket 錯誤：${msg.data?.message || msg.message || '請檢查方案及 API Key'}`;
-        }
-      };
-      socket.onerror = () => { if(fugleSocket===socket){wsSymbols.clear();pendingPair.clear();$('wsStateText').textContent = 'WebSocket 連線異常，REST 將接手更新。';} };
-      socket.onclose = () => {
-        if (fugleSocket === socket) {fugleSocket = null;wsSymbols.clear();}
-        if (releaseWsLock) { const release = releaseWsLock; releaseWsLock = null; release(); }
-        resolve();
-        if (wsShouldRun) {
-          $('wsStateText').textContent = 'WebSocket 已中斷；REST 暫時接手全部標的，稍後重連。';
-          clearTimeout(wsRetryTimer);
-          wsRetryTimer = setTimeout(connectFugleWebSocket, wsRetryDelay);
-          wsRetryDelay = Math.min(wsRetryDelay * 2, 60000);
-        }
-      };
-    });
-
-    if (navigator.locks?.request) {
-      if (wsLockTask) return;
-      wsLockTask = navigator.locks.request('exposure-fugle-single-websocket', {mode:'exclusive', ifAvailable:true}, async lock => {
-        if (!lock) {
-          $('wsStateText').textContent = '另一個分頁已占用 Fugle 唯一 WebSocket 連線；本分頁改用 REST，稍後再檢查。';
-          if (wsShouldRun) wsRetryTimer = setTimeout(connectFugleWebSocket, 10000);
-          return;
-        }
-        await new Promise((release) => {
-          releaseWsLock = release;
-          openSocketAndHoldLock().catch(error => {
-            $('wsStateText').textContent = `WebSocket 啟動失敗：${error.message}`;
-            if (releaseWsLock) { const done = releaseWsLock; releaseWsLock = null; done(); }
-          });
-        });
-      }).catch(error => {
-        $('wsStateText').textContent = `WebSocket 分頁鎖定失敗：${error.message}；請只開啟一個分頁。`;
-      }).finally(() => { wsLockTask = null; });
-    } else {
-      $('wsStateText').textContent = '瀏覽器不支援分頁連線鎖定，請只開啟一個儀表板分頁。';
-      openSocketAndHoldLock().catch(error => { $('wsStateText').textContent = `WebSocket 啟動失敗：${error.message}`; });
-    }
-  }
-  async function refreshQuotes() {
-    if (!apiConfigured || isRefreshing) return;
+  async function refreshQuotes(interactive=false) {
+    if (isRefreshing || (!interactive && !shioajiEnabled)) return;
     isRefreshing = true;
     try {
-      const activeSwapSymbol = $('swapModal')?.classList.contains('open') ? String($('swapSymbol')?.value || '').trim().toUpperCase() : '';
-      const all = currentQuoteSymbols(activeSwapSymbol);
-      const streaming=fugleSocket&&fugleSocket.readyState===WebSocket.OPEN?wsSymbols:new Set();
-      const symbols = MarketQuotes.restSymbols(all,streaming,state.settings.benchmark);
-      for (const symbol of symbols) {
-        try { const quote = await fetchQuote(symbol); updateQuoteEverywhere(symbol, quote); }
-        catch (e) {
-          if (!state.quoteCache[symbol]) state.quoteCache[symbol] = { error:e.message };
-          if (['FUGLE_REST_RATE_LIMIT','RATE_LIMITER_UNAVAILABLE','RATE_LIMITER_NOT_CONFIGURED'].includes(e.code)) break;
-        }
-      }
-      persist(); renderAll(); if ($('swapModal')?.classList.contains('open')) updateSwapPreview();
-      $('footerUpdated').textContent = `REST 輪詢 ${symbols.length} 檔 · ${new Intl.DateTimeFormat('zh-TW',{timeZone:'Asia/Taipei',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date())}`;
+      const activeSwapSymbol = $('swapModal')?.classList.contains('open') ? $('swapSymbol').value : '';
+      const quotes = await fetchShioajiQuotes(currentQuoteSymbols(activeSwapSymbol), interactive);
+      shioajiEnabled = true;
+      localStorage.setItem(SHIOAJI_STORE, '1');
+      applyShioajiQuotes(quotes);
+      return true;
+    } catch (error) {
+      shioajiStatus = error.message;
+      updateApiStatusUi();
+      return false;
     } finally { isRefreshing = false; }
-    void refreshHoldingHighs();
   }
   function holdingHighOf(symbol){
     const s=MarketQuotes.symbol(symbol),market=state.marketHistory?.symbol===s?state.marketHistory:null,holding=state.holdingHighs?.[s];
     return [market,holding].filter(h=>Number(h?.highPrice)>0).sort((a,b)=>(b.fetchedAt||0)-(a.fetchedAt||0))[0]||null;
   }
-  function freshHigh(history){return Number(history?.highPrice)>0&&Date.now()-Number(history.fetchedAt)<HISTORY_TTL;}
-  async function fetchMarketHistory(symbol){
-    if(historyRequestsInFlight.has(symbol))return historyRequestsInFlight.get(symbol);
-    const task=(async()=>{
-      const r=await fetch(`/api/history?symbol=${encodeURIComponent(symbol)}`,{cache:'no-store'});
-      acceptRateHeaders(r);
-      const body=await r.json().catch(()=>({}));
-      if(!r.ok)throw Object.assign(new Error(body.error||'歷史資料取得失敗'),{code:body.code});
-      return {...body,fetchedAt:Date.now()};
-    })();
-    historyRequestsInFlight.set(symbol,task);
-    try{return await task;}finally{historyRequestsInFlight.delete(symbol);}
-  }
-  async function refreshHoldingHighs(){
-    if(!apiConfigured||isRefreshingHoldingHighs||currentPage!=='overview'||document.hidden)return;
-    const symbols=MarketQuotes.symbols(state.holdings.map(h=>h.symbol));
-    const pending=symbols.filter(s=>!freshHigh(holdingHighOf(s))&&(holdingHighRetry.get(s)||0)<=Date.now()).slice(0,4);
-    if(!pending.length)return;
-    isRefreshingHoldingHighs=true;
-    let changed=false;
-    try{
-      for(const symbol of pending){
-        if(apiRateUsage.remaining!=null&&apiRateUsage.remaining<2)break;
-        try{
-          const h=holdingHighOf(symbol);
-          if(freshHigh(h))continue;
-          const history=await fetchMarketHistory(symbol);
-          if(!(Number(history.highPrice)>0))throw Error('缺少最高價');
-          if(!state.holdings.some(h=>MarketQuotes.symbol(h.symbol)===symbol))continue;
-          state.holdingHighs=state.holdingHighs||{};
-          state.holdingHighs[symbol]={highPrice:history.highPrice,highPriceDate:history.highPriceDate,fetchedAt:history.fetchedAt};
-          holdingHighRetry.delete(symbol);changed=true;
-        }catch(e){
-          const limited=['FUGLE_REST_RATE_LIMIT','RATE_LIMITER_UNAVAILABLE','RATE_LIMITER_NOT_CONFIGURED'].includes(e.code);
-          holdingHighRetry.set(symbol,Date.now()+(limited?60000:600000));
-          if(limited)break;
-        }
-      }
-    }finally{
-      isRefreshingHoldingHighs=false;
-      if(changed){persist();renderOverview();}
-    }
-  }
-  async function refreshMarketHistory(force) {
-    if (!apiConfigured) return;
-    const symbol = String(state.settings.benchmark || '0050').toUpperCase();
-    const cache = state.marketHistory;
-    if (!force && cache?.symbol === symbol && freshHigh(cache)) return;
-    try {
-      state.marketHistory = await fetchMarketHistory(symbol); persist(); renderOverview();
-      notify(`${symbol} 52 週收盤高點已更新`);
-    } catch(e) { $('marketSourceText').textContent = `歷史資料更新失敗：${e.message}`; }
-  }
   function startQuoteTimer() {
-    stopQuoteTimer();
-    connectFugleWebSocket();
-    const symbols = currentQuoteSymbols();
-    const sec = 60; // user's requested cadence; keep REST comfortably below free-tier limit
-    quoteTimer = setInterval(refreshQuotes, sec*1000);
-    if (rateUsageTimer) clearInterval(rateUsageTimer);
-    rateUsageTimer = setInterval(refreshRateLimitUsage, 30000);
-    if (apiConfigured) $('sideStatusSub').textContent = `WebSocket 最多 5 檔 + 其餘 REST 每 ${sec} 秒 · ${symbols.length} 個代號`;
+    clearInterval(quoteTimer);
+    quoteTimer = setInterval(() => { if (!document.hidden) void refreshQuotes(); }, 60000);
   }
-  function stopQuoteTimer() { if (quoteTimer) clearInterval(quoteTimer); quoteTimer = null; if (rateUsageTimer) clearInterval(rateUsageTimer); rateUsageTimer = null; clearTimeout(wsRetryTimer); wsShouldRun = false; wsSymbols.clear(); if (fugleSocket) { try { fugleSocket.close(); } catch {} } }
 
   function clearHoldingForm() {
     $('holdingForm').reset(); $('editHoldingId').value=''; $('holdingModalTitle').textContent='新增持股';
     $('assetCategory').value='core'; $('assetBeta').value='1'; $('assetQuantity').value='0'; $('assetCost').value='0'; $('assetPrice').value='0';
-    $('deleteHoldingBtn').hidden=true; $('assetQuoteHint').textContent='若已設定 Fugle API，儲存後會自動更新最新報價；手動價格僅作行情服務未連線時的備援值。';
+    $('deleteHoldingBtn').hidden=true; $('assetQuoteHint').textContent='永豐本機服務連線後會更新報價；也可輸入手動備援價。';
   }
   function openAddHolding() { clearHoldingForm(); openModal('holdingModal'); }
   function openEditHolding(id) {
@@ -651,7 +454,7 @@
     const previous=state.holdings.find(x=>x.id===id);
     const asset={id:id||uid(),symbol,name:$('assetName').value.trim()||symbol,category:$('assetCategory').value,beta:Number($('assetBeta').value),quantity:Number($('assetQuantity').value),cost:Number($('assetCost').value),manualPrice:Number($('assetPrice').value),quote:previous?.symbol===symbol?previous.quote:state.quoteCache[symbol]||null};
     if(id)state.holdings=state.holdings.map(x=>x.id===id?asset:x); else state.holdings.push(asset);
-    persist(); closeModal('holdingModal'); renderAll(); if(currentPage==='holdings')renderHoldings(); notify('持倉資料已儲存'); if(apiConfigured)refreshQuotes();
+    persist(); closeModal('holdingModal'); renderAll(); if(currentPage==='holdings')renderHoldings(); notify('持倉資料已儲存'); void refreshQuotes();
   }
   function deleteHolding(id) {
     const h=state.holdings.find(x=>x.id===id); if(!h)return;
@@ -682,11 +485,10 @@
     $('swapPreview').innerHTML=`<div>原持倉：<strong>${escapeHtml(x.from.symbol)}</strong> · 市值 ${money(x.oldValue)} · Beta ${betaFmt(x.oldBeta)}</div><div>新標的：<strong>${escapeHtml($('swapSymbol').value.trim().toUpperCase()||'—')}</strong> · 預估換入市值 ${money(x.newValue)} · Beta ${betaFmt(x.newBeta)}</div><div>預估換入數量：<strong>${number(x.qty)}</strong> 股</div><div>現金差額（原市值－新換入市值）：<strong style="color:${x.cashDifference>=0?'#14966d':'#c86b6b'}">${x.cashDifference>=0?'+':''}${money(x.cashDifference)}</strong></div>`;
     const cachedQuote = state.quoteCache[$('swapSymbol').value.trim().toUpperCase()];
     const usesCachedQuote = cachedQuote && Math.abs(Number(cachedQuote.price || 0) - x.newPrice) < 0.005;
-    $('swapQuoteStamp').textContent = usesCachedQuote ? `計算採用報價 ${money2(x.newPrice)} · ${fmtTime(cachedQuote.quoteTime || cachedQuote.lastUpdated)} · ${cachedQuote.source || 'Fugle'}` : `計算採用手動價格 ${money2(x.newPrice)}`;
+    $('swapQuoteStamp').textContent = usesCachedQuote ? `計算採用報價 ${money2(x.newPrice)} · ${fmtTime(cachedQuote.quoteTime || cachedQuote.lastUpdated)} · ${cachedQuote.source || '既有報價'}` : `計算採用手動價格 ${money2(x.newPrice)}`;
   }
   async function fetchSwapQuote() {
     const symbol=$('swapSymbol').value.trim().toUpperCase(); if(!symbol){notify('請先輸入新標的代號');return;}
-    if(!apiConfigured){notify('行情 API 尚未設定，請手動輸入新標的價格。');return;}
     try { const q=await fetchQuote(symbol); updateQuoteEverywhere(symbol,q); $('swapPrice').value=q.price; if(!$('swapName').value)$('swapName').value=q.name||symbol; updateSwapPreview(); persist(); renderAll(); notify(`已取得 ${symbol} 報價 ${money2(q.price)}`); }
     catch(e){notify(`取得報價失敗：${e.message}`);}
   }
@@ -705,14 +507,16 @@
       const newHolding={...x.from,symbol,name:newName,beta:x.newBeta,quantity:x.qty,manualPrice:x.newPrice,quote:state.quoteCache[symbol]||null};
       state.holdings=state.holdings.map(h=>h.id===x.from.id?newHolding:h);
     }
-    persist(); closeModal('swapModal'); renderAll(); notify(`已將 ${x.from.symbol} 替換為 ${symbol}（僅更新模型持倉）`); if(apiConfigured)refreshQuotes();
+    persist(); closeModal('swapModal'); renderAll(); notify(`已將 ${x.from.symbol} 替換為 ${symbol}（僅更新模型持倉）`); void refreshQuotes();
   }
-  async function estimateBeta() {
-    const symbol=$('assetSymbol').value.trim().toUpperCase(); const benchmark=String(state.settings.benchmark||'0050').toUpperCase();
-    if(!symbol){notify('請先輸入股票代號');return;} if(!apiConfigured){notify('請先設定 Fugle API 才能自動估算 Beta。');return;}
-    const btn=$('estimateBetaBtn'); btn.disabled=true; btn.textContent='估算中…';
-    try{const r=await fetch(`/api/beta?symbol=${encodeURIComponent(symbol)}&benchmark=${encodeURIComponent(benchmark)}`,{cache:'no-store'});acceptRateHeaders(r);const d=await r.json();if(!r.ok){if(d.code)await refreshRateLimitUsage();throw new Error(d.error||'Beta 計算失敗');}$('assetBeta').value=d.beta;notify(`${symbol} Beta 估算為 ${betaFmt(d.beta)}（${d.observations} 個日報酬觀測值）`);}
-    catch(e){notify(e.message);}finally{btn.disabled=false;btn.textContent=`以 ${benchmark} 為基準估算 β`;}
+  function estimateBeta() {
+    const symbol = MarketQuotes.symbol($('assetSymbol').value);
+    if (!symbol) return notify('請先輸入股票代號');
+    if (symbol === MarketQuotes.symbol(state.settings.benchmark)) {
+      $('assetBeta').value = '1';
+      return notify('基準標的 Beta 為 1.00');
+    }
+    notify('尚無永豐還原日 K 可估算，請使用既有或手動輸入的 Beta。');
   }
   function saveCash() {
     const value=Number($('cashBalanceInput').value);
@@ -726,8 +530,7 @@
     if(!Number.isFinite(targetBeta)||targetBeta<0||targetBeta>5){notify('目標 Beta 請設定在 0～5');return false;}
     if(!Number.isFinite(tolerance)||tolerance<0||tolerance>50){notify('容許偏離幅度請設定在 0～50%');return false;}
     if(Object.values(target).some(x=>!Number.isFinite(x)||x<0||x>100)||total!==100){notify('目標配置三項比例合計必須剛好為 100%');return false;}
-    const sec=Number($('refreshSeconds').value);
-    state.settings={...state.settings,targetBeta,tolerance,target,refreshSeconds:[15,30,60].includes(sec)?sec:60,benchmark:$('benchmarkSymbol').value.trim().toUpperCase()||'0050'};
+    state.settings={...state.settings,targetBeta,tolerance,target,benchmark:$('benchmarkSymbol').value.trim().toUpperCase()||'0050'};
     persist(); startQuoteTimer(); updateApiStatusUi(); renderAll(); notify('設定已儲存'); $('settingsSaveStatus').textContent='已儲存'; return true;
   }
   function saveSnapshot() {
@@ -788,19 +591,16 @@
     $('settingTargetBeta').addEventListener('change',()=>{ $('settingsSaveStatus').textContent='尚有未儲存變更'; });
     $('settingTolerance').addEventListener('change',()=>{ $('settingsSaveStatus').textContent='尚有未儲存變更'; });
     ['targetLever','targetCore','targetCash'].forEach(id=>$(id).addEventListener('input',()=>{updateTargetTotal();$('settingsSaveStatus').textContent='尚有未儲存變更';}));
-    $('refreshSeconds').addEventListener('change',()=>{$('settingsSaveStatus').textContent='尚有未儲存變更';});
     $('benchmarkSymbol').addEventListener('change',()=>{$('settingsSaveStatus').textContent='尚有未儲存變更';});
-    $('refreshAllBtn').addEventListener('click',async()=>{if(apiConfigured){await refreshQuotes();await refreshMarketHistory(false);notify('行情更新完成');}else notify('請先設定 Fugle API；目前使用手動價格。');});
-    $('marketRefreshBtn').addEventListener('click',()=>refreshMarketHistory(true));
+    $('refreshAllBtn').addEventListener('click',()=>refreshQuotes(true));
+    $('marketRefreshBtn').addEventListener('click',()=>notify('52 週走勢顯示既有資料，等待可核對的還原日 K。'));
     $('marketRanges').addEventListener('click', event => {
       const button = event.target.closest('button[data-range]');
       if (!button) return;
       marketRangeMonths = Number(button.dataset.range);
       renderMarketCard();
     });
-    $('checkApiBtn').addEventListener('click',()=>checkApiStatus());
-    $('saveWsKeyBtn').addEventListener('click',()=>{const key=$('wsApiKey').value.trim();if(!key){notify('請先輸入 Fugle API Key');return;}localStorage.setItem(WS_KEY_STORE,key);connectFugleWebSocket();notify('WebSocket Key 已儲存在本機');});
-    $('clearWsKeyBtn').addEventListener('click',()=>{localStorage.removeItem(WS_KEY_STORE);$('wsApiKey').value='';stopQuoteTimer();startQuoteTimer();notify('已清除本機 WebSocket Key');});
+    $('checkApiBtn').addEventListener('click',()=>refreshQuotes(true));
     $('saveSnapshotBtn').addEventListener('click',saveSnapshot);$('historyExportBtn').addEventListener('click',exportHistory);$('exportCsvBtn').addEventListener('click',exportHoldings);
     $('historyBody').addEventListener('click',e=>{const btn=e.target.closest('[data-delete-history]');if(!btn)return;const date=btn.dataset.deleteHistory;if(confirm(`確定刪除 ${date} 的快照？`)){state.history=state.history.filter(x=>x.date!==date);persist();renderHistory();}});
     $('clearHistoryBtn').addEventListener('click',()=>{if(confirm('確定清除所有歷史快照？建議先匯出 CSV。')){state.history=[];persist();renderHistory();notify('歷史紀錄已清除');}});
@@ -1164,7 +964,7 @@
       }
     });
     workspace.addEventListener('change',event=>{
-      if(event.target.dataset.holdingField==='symbol' && apiConfigured) refreshQuotes();
+      if(event.target.dataset.holdingField==='symbol') refreshQuotes();
     });
     workspace.addEventListener('click',event=>{
       const button=event.target.closest('button');if(!button)return;
@@ -1190,7 +990,8 @@
 
   function init() {
     initCashEditor(); initFamiliarSettings(); bindEvents(); renderAll(); renderSettings();
-    checkApiStatus();
+    updateApiStatusUi(); startQuoteTimer();
+    if (shioajiEnabled) void refreshQuotes();
   }
   window.exposureRiskBridge={getTarget:()=>Number(state.settings.targetBeta),setTarget:value=>{if(!Number.isFinite(value)||value<0||value>5)return;saveFamiliarValue('targetBeta',value);renderSettings();notify('已更新目標 Beta，請至再平衡頁確認調整。');}};
   window.exposureIndexQuote=indexQuoteReading;
