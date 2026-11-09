@@ -1,14 +1,40 @@
 (()=>{
   'use strict';
   const KEY='exposureIndexRisk.v1';
+  const CACHE_KEY='exposureIndexCache.v3';
   let config;try{config=JSON.parse(localStorage.getItem(KEY)||'{}');}catch{config={};}
-  let payload=null,range=60;
+  let payload=null,range=60,live=window.exposureIndexQuote?.(),loading=false,lastFetch=0;
   if(config.baselinePreset!=='1.30'){config.baseline=1.3;config.baselinePreset='1.30';localStorage.setItem(KEY,JSON.stringify(config));}
   const panel=document.createElement('article');panel.className='panel index-signals-panel';
-  panel.innerHTML='<div class="panel-top"><div><div class="section-label">TAIEX · BETA GUIDE</div><h2>Beta 調整建議</h2></div><button class="secondary-button small" id="indexSignalsRefresh">更新日線</button></div><p id="indexSignalsStatus">正在取得已收盤日 K…</p><div id="indexSignalsContent"></div><details id="betaHistoryDetails" class="beta-fold"><summary>歷史驗證與比較</summary><p class="beta-note">試行規則可能增加交易成本、錯過漲幅，歷史結果不保證未來績效。</p><div id="betaHeatComparison"></div><div id="betaHistoryReports"></div></details>';
+  panel.innerHTML='<div class="panel-top"><div><div class="section-label">TAIEX · BETA GUIDE</div><h2>Beta 調整建議</h2></div><button class="secondary-button small" id="indexSignalsRefresh">更新日線</button></div><p id="indexSignalsStatus">正在取得已收盤日 K…</p><p id="indexSignalsLive" hidden></p><p id="indexSignalsPreview" hidden></p><div id="indexSignalsContent"></div><details id="betaHistoryDetails" class="beta-fold"><summary>歷史驗證與比較</summary><p class="beta-note">試行規則可能增加交易成本、錯過漲幅，歷史結果不保證未來績效。</p><div id="betaHeatComparison"></div><div id="betaHistoryReports"></div></details>';
   document.querySelector('#page-overview .overview-grid').append(panel);
   const $=id=>document.getElementById(id),fmt=value=>value==null?'—':Number(value).toFixed(2),escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function save(){localStorage.setItem(KEY,JSON.stringify(config));}
+  function adviceFor(rows){
+    const current=Number(window.exposureRiskBridge?.getTarget()??1),base=Number(config.baseline??1.3);
+    const appliedIndex=rows.findIndex(row=>row.date===config.appliedDate);
+    const daysSinceApplied=appliedIndex>=0?rows.length-1-appliedIndex:Infinity;
+    const execution=config.execution==='fastDown'?'fastDown':'gradual',model=config.model||'recovery';
+    const advice=RiskPolicy.recommendation(rows,base,current,model,execution,daysSinceApplied,config.overheatEnabled!==false);
+    return {current,base,daysSinceApplied,execution,model,advice};
+  }
+  function renderLive(){
+    const reading=$('indexSignalsLive'),preview=$('indexSignalsPreview');
+    const last=payload?.data.at(-1);
+    const quote=live?.source==='永豐 Shioaji'&&Number.isFinite(live.price)&&live.price>0 ? live : null;
+    reading.hidden=!quote||Boolean(last&&quote.date<last.date);
+    if(!reading.hidden) reading.textContent=`永豐最新指數 ${quote.price.toLocaleString('zh-TW',{minimumFractionDigits:2,maximumFractionDigits:2})} 點 · ${quote.time}`;
+    const today=new Date(Date.now()+8*3600000).toISOString().slice(0,10);
+    preview.hidden=reading.hidden||!last||quote.date!==today||quote.date<=last.date;
+    if(preview.hidden)return;
+    if(!Number.isFinite(quote.high)||!Number.isFinite(quote.low)||quote.low<=0||quote.price<quote.low||quote.price>quote.high){
+      preview.textContent='等待永豐提供當日高低點，收盤建議以已確認日線為準。';
+      return;
+    }
+    const todayRow={date:quote.date,high:quote.high,low:quote.low,close:quote.price};
+    const {advice}=adviceFor(IndexRisk.calculate([...payload.data,todayRow]));
+    preview.textContent=`即時試算 Beta ${fmt(advice.next)} · 依最新指數與當日高低點計算，待收盤日線確認。`;
+  }
   function chart(rows,keys,colors,limits){
     const valid=rows.flatMap(r=>keys.map(k=>r[k])).filter(v=>v!=null);if(!valid.length)return '';
     let min=limits?limits[0]:Math.min(...valid,0),max=limits?limits[1]:Math.max(...valid,0);const padding=(max-min||1)*.1;if(!limits){min-=padding;max+=padding;}
@@ -21,10 +47,8 @@
   function render(){
     if(!payload)return;
     const openDetails=new Map([...panel.querySelectorAll('details[id]')].map(el=>[el.id,el.open]));
-    const all=RiskPolicy.decorate(payload.data),last=all.at(-1),rows=all.slice(-range),current=Number(window.exposureRiskBridge?.getTarget()??1),base=Number(config.baseline??1.3);
-    const appliedIndex=all.findIndex(row=>row.date===config.appliedDate),daysSinceApplied=appliedIndex>=0?all.length-1-appliedIndex:Infinity;
-    const execution=config.execution==='fastDown'?'fastDown':'gradual',model=config.model||'recovery';
-    const advice=RiskPolicy.recommendation(all,base,current,model,execution,daysSinceApplied,config.overheatEnabled!==false);
+    const all=RiskPolicy.decorate(payload.data),last=all.at(-1),rows=all.slice(-range);
+    const {current,base,daysSinceApplied,execution,model,advice}=adviceFor(all);
     const stale=(Date.now()-Date.parse(last.date+'T00:00:00+08:00'))/86400000>7,cooldown=advice.cooldown;
     const heat=advice.heat,heatActive=advice.overheatEnabled&&heat.level>0,repair=model==='recovery'&&last.repair&&last.drawdown>-20;
     const state=heatActive?'高檔轉弱防守':advice.multiplier<1?'趨勢防守中':repair?'低檔修復中':heat.hot||heat.raw?'過熱觀察中':'趨勢平穩';
@@ -34,6 +58,7 @@
     const reasons=advice.reasons.length?advice.reasons.map(escape).join('；'):'目前未符合轉弱防守條件。';
     window.dispatchEvent(new CustomEvent('exposure-index-data',{detail:all}));
     $('indexSignalsStatus').textContent=`${last.date} 已收盤 · ${payload.name} ${fmt(last.close)} 點 · ${payload.source}`;
+    renderLive();
     $('indexSignalsContent').innerHTML=`
       <section class="beta-unified" aria-label="整合 Beta 建議">
         <div class="beta-unified-heading"><h3>${action}</h3><span class="beta-state ${advice.multiplier<1?'defensive':''}">${state}</span></div>
@@ -42,7 +67,7 @@
         <p class="beta-reasons">${reasons}</p>
         <div class="beta-signal-states"><div><span>${model==='legacy'?'原始防守':'趨勢防守'}</span><strong>${advice.stage} / 3 級</strong></div><div><span>高檔防守</span><strong>${advice.overheatEnabled?heat.level+' / 2 級':'已關閉'}</strong></div><div><span>低檔修復</span><strong>${model!=='recovery'?'未啟用':repair?'條件符合':'等待轉強'}</strong></div></div>
         <p class="beta-action-note">${actionText}</p>
-        <button class="primary-button" id="indexApplyBeta" ${stale||cooldown||Math.abs(current-advice.next)<.005?'disabled':''}>採用建議 Beta ${fmt(advice.next)}</button>
+        <button class="primary-button" id="indexApplyBeta" ${stale||cooldown||Math.abs(current-advice.next)<.005?'disabled':''}>採用收盤建議 Beta ${fmt(advice.next)}</button>
         <p class="beta-note" role="status">${notice}</p>
       </section>
       <p class="beta-note beta-trial-note">趨勢、高檔與低檔訊號已合併；兩種防守取較低上限。試行規則可能增加交易、錯過漲幅，歷史比較未證明一定更好。</p>
@@ -74,17 +99,43 @@
     $('indexBaseline').addEventListener('change',e=>{const v=Number(e.target.value);if(Number.isFinite(v)&&v>=0&&v<=5){config.baseline=v;save();render();}});
     $('indexApplyBeta').addEventListener('click',()=>{if(stale||cooldown)return;config.baseline=base;window.exposureRiskBridge.setTarget(advice.next);config.appliedDate=last.date;save();render();});
   }
+  function waitingForClose(lastDate){
+    const taipei=new Date(Date.now()+8*3600000);
+    const day=taipei.getUTCDay(),minutes=taipei.getUTCHours()*60+taipei.getUTCMinutes();
+    return day>=1&&day<=5&&minutes>=13*60+45&&lastDate<taipei.toISOString().slice(0,10);
+  }
+  function refreshCloseIfDue(){
+    const last=payload?.data.at(-1);
+    if(!last||document.hidden||!waitingForClose(last.date))return;
+    const retry=live?.date>last.date?300000:3600000;
+    if(Date.now()-lastFetch>=retry)void refresh(true);
+  }
   async function refresh(force=false){
+    if(loading)return;
+    loading=true;
     $('indexSignalsRefresh').disabled=true;
     try{
-      if(!force){const cached=JSON.parse(sessionStorage.getItem('exposureIndexCache.v2')||'null');if(cached&&Date.now()-cached.at<3600000){payload=cached.payload;render();return;}}
+      if(!force){
+        const cached=JSON.parse(sessionStorage.getItem(CACHE_KEY)||'null');
+        const lastDate=cached?.payload?.data.at(-1)?.date;
+        if(lastDate&&Date.now()-cached.at<(waitingForClose(lastDate)?300000:3600000)){
+          payload=cached.payload;lastFetch=cached.at;render();return;
+        }
+      }
+      lastFetch=Date.now();
       const response=await fetch('/api/index-signals'),data=await response.json();if(!response.ok)throw new Error(data.error||'讀取失敗');
-      payload=data;sessionStorage.setItem('exposureIndexCache.v2',JSON.stringify({at:Date.now(),payload}));render();
-    }catch(e){$('indexSignalsStatus').textContent=`加權指數更新失敗：${e.message}。暫不產生新建議。`;$('indexSignalsContent').innerHTML='';}
-    finally{$('indexSignalsRefresh').disabled=false;}
+      payload=data;sessionStorage.setItem(CACHE_KEY,JSON.stringify({at:lastFetch,payload}));render();
+    }catch(e){
+      if(payload){render();$('indexSignalsStatus').textContent+=' · 日線更新暫時失敗';}
+      else{$('indexSignalsStatus').textContent=`日線更新失敗：${e.message}。暫不產生新建議。`;}
+    }
+    finally{loading=false;$('indexSignalsRefresh').disabled=false;}
   }
   panel.addEventListener('click',e=>{const b=e.target.closest('[data-days]');if(b){range=Number(b.dataset.days);render();}});
   $('indexSignalsRefresh').addEventListener('click',()=>refresh(true));
+  window.addEventListener('exposure-index-quote',event=>{live=event.detail;renderLive();});
+  document.addEventListener('visibilitychange',refreshCloseIfDue);
+  setInterval(refreshCloseIfDue,300000);
   window.addEventListener('exposure-target-changed',render);
-  window.addEventListener('exposure-overheat-report-ready',()=>{if(payload)render();});refresh();
+  window.addEventListener('exposure-overheat-report-ready',()=>{if(payload)render();});renderLive();refresh();
 })();

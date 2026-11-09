@@ -21,6 +21,7 @@ SITE = "https://exposure-manager.vercel.app"
 INDEX = "IX0001"
 MAX_SYMBOLS = 100
 STREAM_INTERVAL = 20
+HOLDINGS_INTERVAL = 60
 TAIPEI = timezone(timedelta(hours=8))
 
 
@@ -60,13 +61,21 @@ class QuoteFeed:
             return
         millis = int(stamp.timestamp() * 1000)
         code = event.code
+        quote = {
+            "symbol": code, "price": price, "quoteTime": millis,
+            "date": stamp.date().isoformat(), "source": "永豐 Shioaji",
+        }
+        if code == INDEX:
+            try:
+                high, low = float(event.high), float(event.low)
+                if isfinite(high) and isfinite(low) and 0 < low <= price <= high:
+                    quote.update(high=high, low=low)
+            except (ValueError, TypeError, AttributeError, OverflowError):
+                pass
         with self.lock:
             previous = self.quotes.get(code)
             if code in self.asked and (not previous or previous["quoteTime"] <= millis):
-                self.quotes[code] = {
-                    "symbol": code, "price": price, "quoteTime": millis,
-                    "date": stamp.date().isoformat(), "source": "永豐 Shioaji",
-                }
+                self.quotes[code] = quote
 
     def read(self, symbols):
         with self.lock:
@@ -159,7 +168,7 @@ def serve(keys):
                 return
             symbols = list(dict.fromkeys(code for code in raw.split(",") if re.fullmatch(r"[A-Z0-9.-]{1,12}", code)))
             if target.path == "/stream":
-                if not 1 <= len(symbols) <= 2:
+                if not 1 <= len(symbols) <= MAX_SYMBOLS:
                     self.send_error(400)
                     return
                 if not stream_slots.acquire(blocking=False):
@@ -189,14 +198,28 @@ def serve(keys):
             self.quote_headers(origin, "text/event-stream; charset=utf-8")
             self.end_headers()
             self.connection.settimeout(5)
-            previous = None
+            market_symbols = symbols[:1] if symbols[0] == INDEX else symbols[:2]
+            previous_market = None
+            cycle = 0
             try:
                 while True:
-                    snapshot = feed.read(symbols)
-                    frame = ": heartbeat\n\n" if snapshot == previous else "data: " + json.dumps(snapshot, ensure_ascii=False) + "\n\n"
+                    full_sync = cycle == 0
+                    snapshot = feed.read(symbols if full_sync else market_symbols)
+                    market = snapshot
+                    if full_sync:
+                        market = {
+                            **snapshot,
+                            "quotes": [quote for quote in snapshot["quotes"] if quote["symbol"] in market_symbols],
+                            "unsupported": [code for code in snapshot["unsupported"] if code in market_symbols],
+                        }
+                        snapshot = {**snapshot, "holdingsSync": True}
+                    frame = ": heartbeat\n\n"
+                    if full_sync or market != previous_market:
+                        frame = "data: " + json.dumps(snapshot, ensure_ascii=False) + "\n\n"
                     self.wfile.write(frame.encode("utf-8"))
                     self.wfile.flush()
-                    previous = snapshot
+                    previous_market = market
+                    cycle = (cycle + 1) % (HOLDINGS_INTERVAL // STREAM_INTERVAL)
                     sleep(STREAM_INTERVAL)
             except OSError:
                 return

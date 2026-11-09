@@ -357,7 +357,7 @@
     $('marketStatusText').textContent = status;
     $('shioajiModeText').textContent = status;
     $('sideStatusText').textContent = '永豐 Shioaji · ' + quoteConnectionName(quoteOrigin());
-    $('sideStatusSub').textContent = '市場水位每 20 秒推播 · 持倉每 60 秒同步';
+    $('sideStatusSub').textContent = '市場水位每 20 秒推播 · 持倉每 60 秒推播';
     $('providerState').textContent = ready ? '已連線' : '等待行情服務';
     $('checkApiBtn').textContent = '重新連線永豐';
     $('pairNgrokBtn').textContent = ngrokToken ? '重新配對 ngrok' : '啟用 ngrok 預設';
@@ -556,7 +556,8 @@
   }
   function connectMarketStream() {
     if (document.hidden) return;
-    const symbols = MarketQuotes.marketPair(state.settings.benchmark);
+    const marketSymbols = MarketQuotes.marketPair(state.settings.benchmark);
+    const symbols = currentQuoteSymbols().slice(0, 100);
     const origin = quoteOrigin();
     const key = origin + '|' + symbols.join(',');
     if (marketStreamKey === key && marketStream?.readyState !== 2) return;
@@ -579,13 +580,23 @@
         updateApiStatusUi();
       }
       let changed = false;
-      for (const quote of MarketQuotes.localBatch(body.quotes, symbols)) {
+      const quotes = MarketQuotes.localBatch(body.quotes, symbols);
+      for (const quote of quotes) {
+        if (!marketSymbols.includes(quote.symbol)) continue;
         const previous = marketQuote(quote.symbol);
         const previousTime = MarketQuotes.timestamp(previous?.quoteTime || previous?.lastUpdated);
         const quoteTime = MarketQuotes.timestamp(quote.quoteTime);
         if (previousTime && quoteTime < previousTime) continue;
         liveMarketQuotes.set(quote.symbol, quote);
-        changed ||= quote.price !== previous?.price || Math.floor(quoteTime / 1000) !== Math.floor(previousTime / 1000);
+        changed ||= quote.price !== previous?.price || Math.floor(quoteTime / 1000) !== Math.floor(previousTime / 1000)
+          || quote.high !== previous?.high || quote.low !== previous?.low;
+      }
+      if (body.holdingsSync === true) {
+        source.holdingsSync = true;
+        quotes.forEach(quote => updateQuoteEverywhere(quote.symbol, quote));
+        persist();
+        renderAll();
+        return;
       }
       if (changed && marketFrame === null) {
         marketFrame = requestAnimationFrame(() => {
@@ -607,7 +618,7 @@
     const q=marketQuote(MarketQuotes.INDEX),price=Number(q?.price);
     if(!Number.isFinite(price)||price<=0)return null;
     const timestamp=q.quoteTime||q.lastUpdated,ms=MarketQuotes.timestamp(timestamp);
-    return {price,time:fmtTime(timestamp),date:q.date||(ms?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms)):null),source:q.source||'既有報價'};
+    return {price, high:q.high, low:q.low, time:fmtTime(timestamp),date:q.date||(ms?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms)):null),source:q.source||'既有報價'};
   }
   function updateQuoteEverywhere(symbol, quote) {
     const previous=state.quoteCache[symbol],older=MarketQuotes.timestamp(quote.quoteTime||quote.lastUpdated),newer=MarketQuotes.timestamp(previous?.quoteTime||previous?.lastUpdated);
@@ -667,20 +678,25 @@
   }
   function startQuoteTimer() {
     clearInterval(quoteTimer);
-    let lastOffHoursRetry = 0;
+    let nextRetry = 0;
     quoteTimer = setInterval(() => {
-      if (document.hidden) return;
+      if (document.hidden || Date.now() < nextRetry) return;
+      const expectedStreamKey = quoteOrigin() + '|' + currentQuoteSymbols().slice(0, 100).join(',');
+      const combined = marketStream?.readyState === 1 && marketStream.holdingsSync === true && marketStreamKey === expectedStreamKey;
+      if (combined && (!ngrokToken || quoteOrigin() === SHIOAJI_NGROK)) return;
       if (ngrokToken) {
         const taipei = new Date(Date.now() + 8 * 60 * 60 * 1000);
         const minutes = taipei.getUTCHours() * 60 + taipei.getUTCMinutes();
         const weekdays = taipei.getUTCDay() >= 1 && taipei.getUTCDay() <= 5;
-        if (!weekdays || minutes < 530 || minutes >= 825) {
-          if (quoteOrigin() === SHIOAJI_NGROK && marketStream?.readyState === 1) return;
-          if (Date.now() - lastOffHoursRetry < 15 * 60000) return;
-          lastOffHoursRetry = Date.now();
+        const offHours = !weekdays || minutes < 530 || minutes >= 825;
+        if (offHours && quoteOrigin() === SHIOAJI_NGROK && marketStream?.readyState === 1 && marketStreamKey === expectedStreamKey) return;
+        if (offHours || combined) {
+          nextRetry = Date.now() + 15 * 60000;
         }
       }
-      void refreshQuotes();
+      void refreshQuotes().then(ok => {
+        if (ngrokToken && ok === false) nextRetry = Math.max(nextRetry, Date.now() + 5 * 60000);
+      });
     }, 60000);
   }
 

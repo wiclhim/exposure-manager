@@ -37,8 +37,11 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
   const now = new Date();
   const taipei = new Date(now.getTime() + 8 * 3600000);
+  const today = taipei.toISOString().slice(0, 10);
   const end = new Date(taipei);
-  if (end.getUTCHours() < 17) end.setUTCDate(end.getUTCDate() - 1);
+  if (end.getUTCHours() * 60 + end.getUTCMinutes() < 13 * 60 + 45) {
+    end.setUTCDate(end.getUTCDate() - 1);
+  }
   const to = end.toISOString().slice(0, 10);
   const start = new Date(end);
   start.setUTCDate(start.getUTCDate() - 364);
@@ -51,7 +54,8 @@ module.exports = async function handler(req, res) {
     const rows = (await Promise.all(months.map(month => monthRows(month, taipei.toISOString().slice(0, 7))))).flat()
       .filter(row => row.date >= from && row.date <= to);
     if (rows.length < 200) throw new Error('近一年有效交易日不足，暫停計算指標');
-    res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate=3600');
+    const hasTodayClose = rows.some(row => row.date === today);
+    res.setHeader('Cache-Control', hasTodayClose ? 's-maxage=3600' : 's-maxage=300');
     return res.status(200).json({ symbol: 'IX0001', name: '臺灣加權指數', source: '臺灣證券交易所收盤日線', fetchedAt: now.toISOString(), data: calculate(rows) });
   } catch (error) {
     res.setHeader('Cache-Control', 'no-store');
