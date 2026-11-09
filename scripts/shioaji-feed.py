@@ -36,12 +36,12 @@ def allowed_request(headers, remote_host, remote_login):
 
 
 class QuoteFeed:
-    def __init__(self):
+    def __init__(self, previous_quotes=()):
         self.state = "connecting"
         self.changed = Condition()
         self.asked = set()
         self.unsupported = set()
-        self.quotes = {}
+        self.quotes = {quote["symbol"]: quote for quote in previous_quotes}
         self.requests = Queue()
 
     def on_quote(self, event):
@@ -121,7 +121,7 @@ class QuoteFeed:
 
 
 def serve(keys):
-    feed = QuoteFeed()
+    feed = QuoteFeed(keys.pop("previous_quotes", ()))
     feed.read(["0050", INDEX])
     stream_slots = BoundedSemaphore(12)
     remote_host = os.environ.get("EXPOSURE_TAILSCALE_HOST")
@@ -194,4 +194,4 @@ def serve(keys):
 
 
 if __name__ == "__main__":
-    serve(json.load(sys.stdin))
+    serve(json.load(sys.stdin.buffer))
