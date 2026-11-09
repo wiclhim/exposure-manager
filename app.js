@@ -7,6 +7,10 @@
   };
   let isRefreshing = false;
   let quoteTimer = null;
+  let marketStream = null;
+  let marketStreamKey = '';
+  let marketFrame = null;
+  const liveMarketQuotes = new Map();
   let swapSymbolDebounce = null;
   const SHIOAJI_STORE = 'exposureShioajiLocal.v1';
   let shioajiEnabled = localStorage.getItem(SHIOAJI_STORE) === '1';
@@ -165,7 +169,7 @@
   }
   function renderMarketCard() {
     const symbol = String(state.settings.benchmark || '0050').toUpperCase();
-    const q = state.quoteCache[symbol];
+    const q = marketQuote(symbol);
     const h = state.marketHistory && state.marketHistory.symbol === symbol ? state.marketHistory : null;
     const price = Number(q?.price || 0), high = Number(h?.highClose || 0);
     renderMarketChart(h, q);
@@ -339,7 +343,7 @@
     $('marketStatusText').textContent = status;
     $('shioajiModeText').textContent = status;
     $('sideStatusText').textContent = '永豐 Shioaji 本機報價';
-    $('sideStatusSub').textContent = '盤中推播 · 每 60 秒同步';
+    $('sideStatusSub').textContent = '市場水位即時推播 · 持倉每 60 秒同步';
     $('providerState').textContent = ready ? '已連線' : '等待本機服務';
     for (const id of ['marketDot','sideStatusDot']) {
       $(id).classList.toggle('ok', ready);
@@ -351,7 +355,7 @@
   async function fetchQuote(symbol) {
     const normalized = MarketQuotes.symbol(symbol);
     if (!normalized) throw new Error('股票代號不可空白');
-    const quotes = await fetchShioajiQuotes([normalized], true);
+    const { quotes } = await fetchShioajiQuotes([normalized], true);
     if (!quotes.length) throw new Error('等待永豐推播此標的的報價');
     return quotes[0];
   }
@@ -374,18 +378,75 @@
     const body = await response.json();
     if (body.state === 'login_error') throw new Error('本機服務登入永豐失敗');
     if (body.state !== 'connected') throw new Error('本機服務正在登入永豐，稍後再試');
-    return MarketQuotes.localBatch(body.quotes, symbols);
+    return { quotes: MarketQuotes.localBatch(body.quotes, symbols), stream: body.stream === true };
   }
-  function applyShioajiQuotes(quotes) {
+  function applyShioajiQuotes(quotes, stream) {
     quotes.forEach(quote => updateQuoteEverywhere(quote.symbol, quote));
-    shioajiStatus = quotes.length ? '已連線 · 永豐行情 ' + quotes.length + ' 檔' : '已連線 · 等待永豐推播';
+    shioajiStatus = marketStream && marketStream.readyState === EventSource.OPEN ? '已連線 · 永豐即時推播'
+      : stream ? '已連線 · 正在連接永豐推播' : '已連線 · 每 60 秒同步，重啟本機服務可啟用即時推播';
     $('footerUpdated').textContent = shioajiStatus;
     persist();
     renderAll();
     updateApiStatusUi();
   }
+  function marketQuote(symbol) {
+    const live = liveMarketQuotes.get(symbol);
+    const saved = state.quoteCache[symbol];
+    return live && MarketQuotes.timestamp(live.quoteTime) >= (MarketQuotes.timestamp(saved?.quoteTime || saved?.lastUpdated) || 0) ? live : saved;
+  }
+  function stopMarketStream() {
+    marketStream?.close();
+    marketStream = null;
+    marketStreamKey = '';
+    if (marketFrame !== null) cancelAnimationFrame(marketFrame);
+    marketFrame = null;
+  }
+  function connectMarketStream() {
+    if (document.hidden || typeof EventSource === 'undefined') return;
+    const symbols = MarketQuotes.marketPair(state.settings.benchmark);
+    const key = symbols.join(',');
+    if (marketStreamKey === key && marketStream?.readyState !== EventSource.CLOSED) return;
+    stopMarketStream();
+    const query = new URLSearchParams({ symbols: key });
+    const source = new EventSource('http://127.0.0.1:8765/stream?' + query);
+    marketStream = source;
+    marketStreamKey = key;
+    source.onmessage = event => {
+      if (marketStream !== source) return;
+      let body;
+      try { body = JSON.parse(event.data); } catch { return; }
+      if (body?.state !== 'connected') return;
+      if (shioajiStatus !== '已連線 · 永豐即時推播') {
+        shioajiStatus = '已連線 · 永豐即時推播';
+        $('footerUpdated').textContent = shioajiStatus;
+        updateApiStatusUi();
+      }
+      let changed = false;
+      for (const quote of MarketQuotes.localBatch(body.quotes, symbols)) {
+        const previous = marketQuote(quote.symbol);
+        const previousTime = MarketQuotes.timestamp(previous?.quoteTime || previous?.lastUpdated);
+        const quoteTime = MarketQuotes.timestamp(quote.quoteTime);
+        if (previousTime && quoteTime < previousTime) continue;
+        liveMarketQuotes.set(quote.symbol, quote);
+        changed ||= quote.price !== previous?.price || Math.floor(quoteTime / 1000) !== Math.floor(previousTime / 1000);
+      }
+      if (changed && marketFrame === null) {
+        marketFrame = requestAnimationFrame(() => {
+          marketFrame = null;
+          renderMarketCard();
+          window.dispatchEvent(new CustomEvent('exposure-index-quote', { detail:indexQuoteReading() }));
+        });
+      }
+    };
+    source.onerror = () => {
+      if (marketStream !== source) return;
+      shioajiStatus = '永豐即時推播暫停 · 等待重連';
+      $('footerUpdated').textContent = shioajiStatus;
+      updateApiStatusUi();
+    };
+  }
   function indexQuoteReading() {
-    const q=state.quoteCache[MarketQuotes.INDEX],price=Number(q?.price);
+    const q=marketQuote(MarketQuotes.INDEX),price=Number(q?.price);
     if(!Number.isFinite(price)||price<=0)return null;
     const timestamp=q.quoteTime||q.lastUpdated,ms=MarketQuotes.timestamp(timestamp);
     return {price,time:fmtTime(timestamp),date:q.date||(ms?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms)):null),source:q.source||'既有報價'};
@@ -412,10 +473,12 @@
     isRefreshing = true;
     try {
       const activeSwapSymbol = $('swapModal')?.classList.contains('open') ? $('swapSymbol').value : '';
-      const quotes = await fetchShioajiQuotes(currentQuoteSymbols(activeSwapSymbol), interactive);
+      const { quotes, stream } = await fetchShioajiQuotes(currentQuoteSymbols(activeSwapSymbol), interactive);
       shioajiEnabled = true;
       localStorage.setItem(SHIOAJI_STORE, '1');
-      applyShioajiQuotes(quotes);
+      applyShioajiQuotes(quotes, stream);
+      if (stream) connectMarketStream();
+      else stopMarketStream();
       return true;
     } catch (error) {
       shioajiStatus = error.message;
@@ -531,7 +594,7 @@
     if(!Number.isFinite(tolerance)||tolerance<0||tolerance>50){notify('容許偏離幅度請設定在 0～50%');return false;}
     if(Object.values(target).some(x=>!Number.isFinite(x)||x<0||x>100)||total!==100){notify('目標配置三項比例合計必須剛好為 100%');return false;}
     state.settings={...state.settings,targetBeta,tolerance,target,benchmark:$('benchmarkSymbol').value.trim().toUpperCase()||'0050'};
-    persist(); startQuoteTimer(); updateApiStatusUi(); renderAll(); notify('設定已儲存'); $('settingsSaveStatus').textContent='已儲存'; return true;
+    persist(); startQuoteTimer(); updateApiStatusUi(); renderAll(); void refreshQuotes(); notify('設定已儲存'); $('settingsSaveStatus').textContent='已儲存'; return true;
   }
   function saveSnapshot() {
     const p=getPortfolio(), total=p.total||0;
@@ -601,6 +664,10 @@
       renderMarketCard();
     });
     $('checkApiBtn').addEventListener('click',()=>refreshQuotes(true));
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stopMarketStream();
+      else void refreshQuotes();
+    });
     $('saveSnapshotBtn').addEventListener('click',saveSnapshot);$('historyExportBtn').addEventListener('click',exportHistory);$('exportCsvBtn').addEventListener('click',exportHoldings);
     $('historyBody').addEventListener('click',e=>{const btn=e.target.closest('[data-delete-history]');if(!btn)return;const date=btn.dataset.deleteHistory;if(confirm(`確定刪除 ${date} 的快照？`)){state.history=state.history.filter(x=>x.date!==date);persist();renderHistory();}});
     $('clearHistoryBtn').addEventListener('click',()=>{if(confirm('確定清除所有歷史快照？建議先匯出 CSV。')){state.history=[];persist();renderHistory();notify('歷史紀錄已清除');}});
