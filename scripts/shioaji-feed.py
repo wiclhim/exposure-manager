@@ -6,11 +6,10 @@ import json
 from math import isfinite
 import os
 from pathlib import Path
-from queue import Queue
 import re
 import sys
-from threading import BoundedSemaphore, Lock, Thread
-from time import sleep
+from threading import BoundedSemaphore, Event, Lock, Thread
+from time import monotonic, sleep
 from urllib.parse import parse_qs, urlsplit
 
 import shioaji as sj
@@ -19,9 +18,12 @@ import shioaji as sj
 PORT = 8765
 SITE = "https://exposure-manager.vercel.app"
 INDEX = "IX0001"
+MARKET_SYMBOLS = ("0050", INDEX)
 MAX_SYMBOLS = 100
 STREAM_INTERVAL = 20
 HOLDINGS_INTERVAL = 60
+STALE_SECONDS = 180
+RECONNECT_INTERVAL = 15 * 60
 TAIPEI = timezone(timedelta(hours=8))
 
 
@@ -46,7 +48,7 @@ class QuoteFeed:
         self.asked = set()
         self.unsupported = set()
         self.quotes = {quote["symbol"]: quote for quote in previous_quotes}
-        self.requests = Queue()
+        self.requests = Event()
 
     def on_quote(self, event):
         try:
@@ -81,14 +83,22 @@ class QuoteFeed:
         with self.lock:
             new_symbols = [code for code in symbols if code not in self.asked]
             remaining = max(0, MAX_SYMBOLS - len(self.asked))
-            for code in new_symbols[:remaining]:
-                self.asked.add(code)
-                self.requests.put_nowait(code)
+            if new_symbols and remaining:
+                self.asked.update(new_symbols[:remaining])
+                self.requests.set()
             return self.snapshot(symbols)
+
+    def market_stale(self, now):
+        minutes = now.hour * 60 + now.minute
+        if now.weekday() >= 5 or not 9 * 60 + STALE_SECONDS // 60 <= minutes < 13 * 60 + 30:
+            return False
+        cutoff = (now.timestamp() - STALE_SECONDS) * 1000
+        return all(self.quotes.get(code, {}).get("quoteTime", 0) < cutoff for code in MARKET_SYMBOLS)
 
     def snapshot(self, symbols):
         return {
             "state": self.state,
+            "marketStale": self.market_stale(datetime.now(TAIPEI)),
             "quotes": [self.quotes[code] for code in symbols if code in self.quotes],
             "unsupported": [code for code in symbols if code in self.unsupported],
             "stream": True,
@@ -101,32 +111,55 @@ class QuoteFeed:
     def run(self, keys):
         api = sj.Shioaji(simulation=True)
         api.set_event_callback(lambda *_: None)
-        try:
-            api.login(api_key=keys["api_key"], secret_key=keys["secret_key"], subscribe_trade=False)
-        except Exception:
-            self.set_state("login_error")
-            return
-        finally:
-            keys.clear()
-        api.set_on_tick_stk_v1_callback(self.on_quote)
-        api.set_on_quote_idx_v1_callback(self.on_quote)
-        self.set_state("connected")
+        reconnect_after = 0
         while True:
-            code = self.requests.get()
             try:
-                contract = api.contracts.get(code)
-                if contract is None or contract.security_type not in (sj.SecurityType.Stock, sj.SecurityType.Index):
-                    raise LookupError(code)
-                quote_type = sj.QuoteType.Quote if contract.security_type == sj.SecurityType.Index else sj.QuoteType.Tick
-                api.subscribe(contract, quote_type=quote_type)
+                api.login(api_key=keys["api_key"], secret_key=keys["secret_key"], subscribe_trade=False)
             except Exception:
-                with self.lock:
-                    self.unsupported.add(code)
+                self.set_state("login_error")
+                sleep(RECONNECT_INTERVAL)
+                continue
+            api.set_on_tick_stk_v1_callback(self.on_quote)
+            api.set_on_quote_idx_v1_callback(self.on_quote)
+            with self.lock:
+                self.unsupported.clear()
+                self.state = "connected"
+            reconnect_after = self.watch_quotes(api, max(reconnect_after, monotonic() + HOLDINGS_INTERVAL))
+
+    def watch_quotes(self, api, reconnect_after):
+        attempted = set()
+        while True:
+            self.requests.clear()
+            with self.lock:
+                pending = self.asked - attempted
+                stale = self.market_stale(datetime.now(TAIPEI))
+            if stale and monotonic() >= reconnect_after:
+                # A live HTTP stream can outlast the upstream quote session.
+                reconnect_after = monotonic() + RECONNECT_INTERVAL
+                self.set_state("reconnecting")
+                try:
+                    api.logout()
+                except Exception:
+                    self.set_state("connected")
+                else:
+                    return reconnect_after
+            for code in sorted(pending):
+                try:
+                    contract = api.contracts.get(code)
+                    if contract is None or contract.security_type not in (sj.SecurityType.Stock, sj.SecurityType.Index):
+                        raise LookupError(code)
+                    quote_type = sj.QuoteType.Quote if contract.security_type == sj.SecurityType.Index else sj.QuoteType.Tick
+                    api.subscribe(contract, quote_type=quote_type)
+                except Exception:
+                    with self.lock:
+                        self.unsupported.add(code)
+            attempted.update(pending)
+            self.requests.wait(STREAM_INTERVAL)
 
 
 def serve(keys):
     feed = QuoteFeed(keys.pop("previous_quotes", ()))
-    feed.read(["0050", INDEX])
+    feed.read(MARKET_SYMBOLS)
     stream_slots = BoundedSemaphore(12)
     remote_host = os.environ.get("EXPOSURE_TAILSCALE_HOST")
     remote_login = os.environ.get("EXPOSURE_TAILSCALE_LOGIN")

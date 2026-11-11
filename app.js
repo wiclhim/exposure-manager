@@ -27,6 +27,7 @@
   const quoteOrigin = () => activeQuoteOrigin || preferredQuoteOrigin();
   const quoteConnectionName = origin => origin === SHIOAJI_NGROK ? 'ngrok' : origin === SHIOAJI_LOCAL ? '本機' : 'Tailscale';
   const ngrokHeaders = token => ({ Authorization: 'Bearer ' + token, 'ngrok-skip-browser-warning': '1' });
+  const delayedQuoteStatus = '已連線 · 永豐報價延遲，顯示最後報價';
   let shioajiStatus = '';
   let toastTimer = null;
   let currentPage = 'overview';
@@ -353,12 +354,13 @@
   }
   function updateApiStatusUi() {
     const ready = shioajiStatus.startsWith('已連線');
+    const delayed = shioajiStatus.startsWith(delayedQuoteStatus);
     const status = shioajiStatus || '請按 ⟳ 連線永豐行情';
     $('marketStatusText').textContent = status;
     $('shioajiModeText').textContent = status;
     $('sideStatusText').textContent = '永豐 Shioaji · ' + quoteConnectionName(quoteOrigin());
     $('sideStatusSub').textContent = '市場水位每 20 秒推播 · 持倉每 60 秒推播';
-    $('providerState').textContent = ready ? '已連線' : '等待行情服務';
+    $('providerState').textContent = delayed ? '報價延遲' : ready ? '已連線' : '等待行情服務';
     $('checkApiBtn').textContent = '重新連線永豐';
     $('pairNgrokBtn').textContent = ngrokToken ? '重新配對 ngrok' : '啟用 ngrok 預設';
     $('ngrokPairHint').textContent = ngrokToken
@@ -404,8 +406,12 @@
     if (!response.ok) throw new Error('無法讀取永豐行情服務，請確認使用相同的 Tailscale 帳號');
     const body = await response.json();
     if (body.state === 'login_error') throw new Error('本機服務登入永豐失敗');
-    if (body.state !== 'connected') throw new Error('本機服務正在登入永豐，稍後再試');
-    return { quotes: MarketQuotes.localBatch(body.quotes, symbols), stream: body.stream === true };
+    if (body.state !== 'connected' && body.state !== 'reconnecting') throw new Error('本機服務正在登入永豐，稍後再試');
+    return {
+      quotes: MarketQuotes.localBatch(body.quotes, symbols),
+      stream: body.stream === true,
+      delayed: body.marketStale === true || body.state === 'reconnecting'
+    };
   }
   async function pairNgrokQuotes() {
     const button = $('pairNgrokBtn');
@@ -423,14 +429,14 @@
       if (!response.ok) throw new Error('家中行情服務暫時無法配對 ngrok');
       const { token } = await response.json();
       if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error('無法取得有效的配對資訊');
-      const { quotes, stream } = await fetchShioajiQuotes(currentQuoteSymbols(), true, SHIOAJI_NGROK, token);
+      const snapshot = await fetchShioajiQuotes(currentQuoteSymbols(), true, SHIOAJI_NGROK, token);
       if (version !== connectionVersion) throw new Error('備用連線已變更，請重新配對');
       localStorage.setItem(SHIOAJI_NGROK_STORE, token);
       localStorage.setItem(SHIOAJI_STORE, '1');
       ngrokToken = token;
       shioajiEnabled = true;
       connectionVersion++;
-      useQuoteConnection(SHIOAJI_NGROK, quotes, stream);
+      useQuoteConnection(SHIOAJI_NGROK, snapshot);
       status.textContent = '配對完成。下次開網站會自動優先使用 ngrok。';
     } catch (error) {
       status.textContent = error.message;
@@ -444,14 +450,14 @@
     button.disabled = true;
     $('shioajiPairStatus').textContent = '正在連線家中行情服務…';
     try {
-      const { quotes, stream } = await fetchShioajiQuotes(currentQuoteSymbols(), true, origin);
+      const snapshot = await fetchShioajiQuotes(currentQuoteSymbols(), true, origin);
       localStorage.setItem(SHIOAJI_REMOTE_STORE, origin);
       localStorage.setItem(SHIOAJI_STORE, '1');
       remoteQuoteOrigin = origin;
       shioajiEnabled = true;
       connectionVersion++;
       if (ngrokToken) void refreshQuotes(true);
-      else useQuoteConnection(origin, quotes, stream);
+      else useQuoteConnection(origin, snapshot);
       $('shioajiPairStatus').textContent = '已儲存這台裝置的 Tailscale 備用連線';
       if (new URLSearchParams(location.hash.slice(1)).has('shioaji')) {
         history.replaceState(null, '', location.pathname + location.search);
@@ -473,7 +479,14 @@
     updateApiStatusUi();
     void refreshQuotes(true);
   }
-  function applyShioajiQuotes(quotes, stream, refreshMarket) {
+  function showQuoteStatus(status, origin) {
+    const text = status + ' · ' + quoteConnectionName(origin);
+    if (shioajiStatus === text) return;
+    shioajiStatus = text;
+    $('footerUpdated').textContent = text;
+    updateApiStatusUi();
+  }
+  function applyShioajiQuotes({ quotes, stream, delayed }, refreshMarket) {
     for (const quote of quotes) {
       updateQuoteEverywhere(quote.symbol, quote);
       const live = liveMarketQuotes.get(quote.symbol);
@@ -481,13 +494,11 @@
         liveMarketQuotes.set(quote.symbol, quote);
       }
     }
-    const via = ' · ' + quoteConnectionName(quoteOrigin());
-    shioajiStatus = marketStream?.readyState === 1 ? '已連線 · 永豐即時推播' + via
-      : stream ? '已連線 · 正在連接永豐推播' + via : '已連線 · 每 60 秒同步' + via;
-    $('footerUpdated').textContent = shioajiStatus;
+    let status = stream ? '已連線 · 正在連接永豐推播' : '已連線 · 每 60 秒同步';
+    if (marketStream?.readyState === 1) status = '已連線 · 永豐即時推播';
+    showQuoteStatus(delayed ? delayedQuoteStatus : status, quoteOrigin());
     persist();
     renderAll();
-    updateApiStatusUi();
   }
   function marketQuote(symbol) {
     const live = liveMarketQuotes.get(symbol);
@@ -572,13 +583,13 @@
       if (marketStream !== source) return;
       let body;
       try { body = JSON.parse(event.data); } catch { return; }
-      if (body?.state !== 'connected') return;
-      const connected = '已連線 · 永豐即時推播 · ' + quoteConnectionName(origin);
-      if (shioajiStatus !== connected) {
-        shioajiStatus = connected;
-        $('footerUpdated').textContent = shioajiStatus;
-        updateApiStatusUi();
+      if (body?.state === 'login_error') {
+        showQuoteStatus('永豐行情服務登入失敗', origin);
+        return;
       }
+      if (body?.state !== 'connected' && body?.state !== 'reconnecting') return;
+      const delayed = body.marketStale === true || body.state === 'reconnecting';
+      showQuoteStatus(delayed ? delayedQuoteStatus : '已連線 · 永豐即時推播', origin);
       let changed = false;
       const quotes = MarketQuotes.localBatch(body.quotes, symbols);
       for (const quote of quotes) {
@@ -637,11 +648,11 @@
     }
     if (swapOpen && (swapTarget === String(symbol).toUpperCase() || sourcePriceChanged)) updateSwapPreview();
   }
-  function useQuoteConnection(origin, quotes, stream, refreshMarket=false) {
+  function useQuoteConnection(origin, snapshot, refreshMarket=false) {
     if (quoteOrigin() !== origin) stopMarketStream();
     activeQuoteOrigin = origin;
-    applyShioajiQuotes(quotes, stream, refreshMarket);
-    if (stream) connectMarketStream();
+    applyShioajiQuotes(snapshot, refreshMarket);
+    if (snapshot.stream) connectMarketStream();
     else stopMarketStream();
   }
   async function refreshQuotes(interactive=false, backupOnly=false) {
@@ -656,11 +667,11 @@
       const errors = [];
       for (const origin of origins) {
         try {
-          const { quotes, stream } = await fetchShioajiQuotes(symbols, interactive, origin);
+          const snapshot = await fetchShioajiQuotes(symbols, interactive, origin);
           if (version !== connectionVersion) return;
           shioajiEnabled = true;
           localStorage.setItem(SHIOAJI_STORE, '1');
-          useQuoteConnection(origin, quotes, stream, interactive);
+          useQuoteConnection(origin, snapshot, interactive);
           return true;
         } catch (error) {
           if (version !== connectionVersion) return;
