@@ -24,9 +24,22 @@
     return (Array.isArray(quotes) ? quotes : []).filter(q =>
       wanted.has(q?.symbol) && Number.isFinite(q.price) && q.price > 0 && timestamp(q.quoteTime));
   }
+  function shioajiIndexBar(quote, now = Date.now()) {
+    if (quote?.source !== '永豐 Shioaji') return null;
+    const { price, high, low } = quote;
+    if (![price, high, low].every(Number.isFinite) || low <= 0 || price < low || price > high) return null;
+    const quoteTime = timestamp(quote.quoteTime);
+    if (!quoteTime || quoteTime > now) return null;
+    const taipei = new Date(quoteTime + 8 * 3600000);
+    const date = taipei.toISOString().slice(0, 10);
+    if (quote.date !== date) return null;
+    // Delayed closing auctions can change the index through 13:33.
+    const closed = taipei.getUTCHours() * 60 + taipei.getUTCMinutes() >= 13 * 60 + 33;
+    return { date, high, low, close: price, quoteTime, closed };
+  }
   function gainToHigh(price,high){
     const p=Number(price),h=Number(high);
     return Number.isFinite(p)&&Number.isFinite(h)&&p>0&&h>0?Math.max(0,(h-p)/p*100):null;
   }
-  return {INDEX,symbol,symbols,marketPair,privateOrigin,timestamp,localBatch,gainToHigh};
+  return {INDEX,symbol,symbols,marketPair,privateOrigin,timestamp,localBatch,shioajiIndexBar,gainToHigh};
 });

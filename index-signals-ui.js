@@ -4,11 +4,14 @@
   const CACHE_KEY='exposureIndexCache.v3';
   let config;try{config=JSON.parse(localStorage.getItem(KEY)||'{}');}catch{config={};}
   let payload=null,range=60,live=window.exposureIndexQuote?.(),loading=false,lastFetch=0;
+  let liveBar=MarketQuotes.shioajiIndexBar(live), closingBar=liveBar?.closed?liveBar:null, signalRows=null;
   if(config.baselinePreset!=='1.30'){config.baseline=1.3;config.baselinePreset='1.30';localStorage.setItem(KEY,JSON.stringify(config));}
   const panel=document.createElement('article');panel.className='panel index-signals-panel';
-  panel.innerHTML='<div class="panel-top"><div><div class="section-label">TAIEX · BETA GUIDE</div><h2>Beta 調整建議</h2></div><button class="secondary-button small" id="indexSignalsRefresh">更新日線</button></div><p id="indexSignalsStatus">正在取得已收盤日 K…</p><p id="indexSignalsLive" hidden></p><p id="indexSignalsPreview" hidden></p><div id="indexSignalsContent"></div><details id="betaHistoryDetails" class="beta-fold"><summary>歷史驗證與比較</summary><p class="beta-note">試行規則可能增加交易成本、錯過漲幅，歷史結果不保證未來績效。</p><div id="betaHeatComparison"></div><div id="betaHistoryReports"></div></details>';
+  panel.innerHTML='<div class="panel-top"><div><div class="section-label">TAIEX · BETA GUIDE</div><h2>Beta 調整建議</h2></div><button class="secondary-button small" id="indexSignalsRefresh">更新指數</button></div><p id="indexSignalsStatus">正在取得加權指數日線…</p><p id="indexSignalsLive" hidden></p><p id="indexSignalsPreview" hidden></p><div id="indexSignalsContent"></div><details id="betaHistoryDetails" class="beta-fold"><summary>歷史驗證與比較</summary><p class="beta-note">試行規則可能增加交易成本、錯過漲幅，歷史結果不保證未來績效。</p><div id="betaHeatComparison"></div><div id="betaHistoryReports"></div></details>';
   document.querySelector('#page-overview .overview-grid').append(panel);
   const $=id=>document.getElementById(id),fmt=value=>value==null?'—':Number(value).toFixed(2),escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fmtIndex=value=>value.toLocaleString('zh-TW',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const staleDate=date=>Date.now()-Date.parse(date+'T00:00:00+08:00')>7*86400000;
   function save(){localStorage.setItem(KEY,JSON.stringify(config));}
   function adviceFor(rows){
     const current=Number(window.exposureRiskBridge?.getTarget()??1),base=Number(config.baseline??1.3);
@@ -20,20 +23,20 @@
   }
   function renderLive(){
     const reading=$('indexSignalsLive'),preview=$('indexSignalsPreview');
-    const last=payload?.data.at(-1);
+    const last=signalRows?.at(-1);
     const quote=live?.source==='永豐 Shioaji'&&Number.isFinite(live.price)&&live.price>0 ? live : null;
-    reading.hidden=!quote||Boolean(last&&quote.date<last.date);
-    if(!reading.hidden) reading.textContent=`永豐最新指數 ${quote.price.toLocaleString('zh-TW',{minimumFractionDigits:2,maximumFractionDigits:2})} 點 · ${quote.time}`;
+    const shownAsClose=liveBar?.closed&&last?.date===liveBar.date&&last?.close===liveBar.close;
+    reading.hidden=!quote||shownAsClose||Boolean(last&&quote.date<last.date);
+    if(!reading.hidden) reading.textContent=`永豐最新指數 ${fmtIndex(quote.price)} 點 · ${quote.time}`;
     const today=new Date(Date.now()+8*3600000).toISOString().slice(0,10);
-    preview.hidden=reading.hidden||!last||quote.date!==today||quote.date<=last.date;
+    preview.hidden=reading.hidden||!last||staleDate(last.date)||quote.date!==today||quote.date<=last.date;
     if(preview.hidden)return;
-    if(!Number.isFinite(quote.high)||!Number.isFinite(quote.low)||quote.low<=0||quote.price<quote.low||quote.price>quote.high){
+    if(!liveBar){
       preview.textContent='等待永豐提供當日高低點，收盤建議以已確認日線為準。';
       return;
     }
-    const todayRow={date:quote.date,high:quote.high,low:quote.low,close:quote.price};
-    const {advice}=adviceFor(IndexRisk.calculate([...payload.data,todayRow]));
-    preview.textContent=`即時試算 Beta ${fmt(advice.next)} · 依最新指數與當日高低點計算，待收盤日線確認。`;
+    const {advice}=adviceFor(IndexRisk.calculate([...signalRows,liveBar]));
+    preview.textContent=`即時試算 Beta ${fmt(advice.next)} · 依永豐指數與當日高低點計算，待收盤報價。`;
   }
   function chart(rows,keys,colors,limits){
     const valid=rows.flatMap(r=>keys.map(k=>r[k])).filter(v=>v!=null);if(!valid.length)return '';
@@ -47,9 +50,20 @@
   function render(){
     if(!payload)return;
     const openDetails=new Map([...panel.querySelectorAll('details[id]')].map(el=>[el.id,el.open]));
-    const all=RiskPolicy.decorate(payload.data),last=all.at(-1),rows=all.slice(-range);
+    const historyLast=payload.data.at(-1);
+    const useShioajiClose=closingBar?.date>=historyLast.date&&!staleDate(historyLast.date);
+    let data=payload.data;
+    if(useShioajiClose){
+      const firstDay=new Date(closingBar.date+'T00:00:00Z');
+      firstDay.setUTCDate(firstDay.getUTCDate()-364);
+      const from=firstDay.toISOString().slice(0,10);
+      // calculate() replaces a same-date row and recomputes the indicators.
+      data=IndexRisk.calculate([...data.filter(row=>row.date>=from),closingBar]);
+    }
+    const all=RiskPolicy.decorate(data),last=all.at(-1),rows=all.slice(-range);
+    signalRows=all;
     const {current,base,daysSinceApplied,execution,model,advice}=adviceFor(all);
-    const stale=(Date.now()-Date.parse(last.date+'T00:00:00+08:00'))/86400000>7,cooldown=advice.cooldown;
+    const stale=staleDate(last.date),cooldown=advice.cooldown;
     const heat=advice.heat,heatActive=advice.overheatEnabled&&heat.level>0,repair=model==='recovery'&&last.repair&&last.drawdown>-20;
     const state=heatActive?'高檔轉弱防守':advice.multiplier<1?'趨勢防守中':repair?'低檔修復中':heat.hot||heat.raw?'過熱觀察中':'趨勢平穩';
     const action=advice.direction==='hold'?'維持目標':advice.direction==='decrease'?'建議降低目標':'建議提高目標';
@@ -57,7 +71,8 @@
     const notice=stale?'日線資料已超過 7 天，暫停採用建議。':cooldown?(daysSinceApplied===0?'同一日線已採用，暫停重複調整。':'距上次採用不足 5 個交易日，暫停本次調整。'):'採用只更新目標 Beta；持倉請到再平衡頁確認。';
     const reasons=advice.reasons.length?advice.reasons.map(escape).join('；'):'目前未符合轉弱防守條件。';
     window.dispatchEvent(new CustomEvent('exposure-index-data',{detail:all}));
-    $('indexSignalsStatus').textContent=`${last.date} 已收盤 · ${payload.name} ${fmt(last.close)} 點 · ${payload.source}`;
+    const source=useShioajiClose?'永豐 Shioaji 收盤報價':payload.source;
+    $('indexSignalsStatus').textContent=`${last.date} 已收盤 · ${payload.name} ${fmtIndex(last.close)} 點 · ${source}`;
     renderLive();
     $('indexSignalsContent').innerHTML=`
       <section class="beta-unified" aria-label="整合 Beta 建議">
@@ -80,7 +95,7 @@
           ${ExposureOverheatUI.rules()}
           <h4>調整方式與原始策略</h4><p>分段模式雙向每次最多 0.10、相隔 5 個交易日；快降模式向下直接到規則參考值，可略過五日冷卻，向上仍每次最多 0.10、相隔 5 日。同一日線不重複採用。</p>
           <p>原始防守版：K &lt; D 且 K &lt; 50、RSI &lt; 45、DIF &lt; 0 且 MACD 柱 &lt; 0 各一分；低於 MA60 至少 2 級，近一年收盤回檔達 20% 為 3 級。同樣經 2 日轉弱與 3 日改善確認。</p>
-          <p>KD(9,3,3) 起始 50，RSI14 採 Wilder 平滑，MACD(12,26,9) 柱為 DIF−訊號、不乘 2。採已收盤日線，資料超過 7 天停用。採用僅更改目標、不會下單；請檢查原形比例與可達 Beta。策略設定存在此瀏覽器，不包含於投組備份。</p>
+          <p>KD(9,3,3) 起始 50，RSI14 採 Wilder 平滑，MACD(12,26,9) 柱為 DIF−訊號、不乘 2。收盤建議優先使用永豐的收盤報價及當日高低點，歷史日線由證交所提供。資料超過 7 天停用。採用僅更改目標、不會下單；請檢查原形比例與可達 Beta。策略設定存在此瀏覽器，不包含於投組備份。</p>
         </details>
       </details>
       <details id="betaIndicatorsDetails" class="beta-fold"><summary>查看指標與判斷依據</summary>
@@ -115,25 +130,40 @@
     loading=true;
     $('indexSignalsRefresh').disabled=true;
     try{
-      if(!force){
+      if(!payload){
         const cached=JSON.parse(sessionStorage.getItem(CACHE_KEY)||'null');
         const lastDate=cached?.payload?.data.at(-1)?.date;
-        if(lastDate&&Date.now()-cached.at<(waitingForClose(lastDate)?300000:3600000)){
-          payload=cached.payload;lastFetch=cached.at;render();return;
+        if(lastDate){
+          payload=cached.payload;
+          if(!force&&Date.now()-cached.at<(waitingForClose(lastDate)?300000:3600000)){
+            lastFetch=cached.at;render();return;
+          }
         }
       }
       lastFetch=Date.now();
       const response=await fetch('/api/index-signals'),data=await response.json();if(!response.ok)throw new Error(data.error||'讀取失敗');
       payload=data;sessionStorage.setItem(CACHE_KEY,JSON.stringify({at:lastFetch,payload}));render();
     }catch(e){
-      if(payload){render();$('indexSignalsStatus').textContent+=' · 日線更新暫時失敗';}
+      if(payload){render();$('indexSignalsStatus').textContent+=' · 歷史日線更新暫時失敗';}
       else{$('indexSignalsStatus').textContent=`日線更新失敗：${e.message}。暫不產生新建議。`;}
     }
     finally{loading=false;$('indexSignalsRefresh').disabled=false;}
   }
   panel.addEventListener('click',e=>{const b=e.target.closest('[data-days]');if(b){range=Number(b.dataset.days);render();}});
-  $('indexSignalsRefresh').addEventListener('click',()=>refresh(true));
-  window.addEventListener('exposure-index-quote',event=>{live=event.detail;renderLive();});
+  $('indexSignalsRefresh').addEventListener('click',()=>{
+    void window.exposureRefreshIndexQuote?.();
+    void refresh(true);
+  });
+  window.addEventListener('exposure-index-quote',event=>{
+    live=event.detail;
+    liveBar=MarketQuotes.shioajiIndexBar(live);
+    if(liveBar?.closed&&liveBar.quoteTime>=(closingBar?.quoteTime??0)&&
+      ['quoteTime','high','low','close'].some(key=>liveBar[key]!==closingBar?.[key])){
+      closingBar=liveBar;
+      if(payload){render();return;}
+    }
+    renderLive();
+  });
   document.addEventListener('visibilitychange',refreshCloseIfDue);
   setInterval(refreshCloseIfDue,300000);
   window.addEventListener('exposure-target-changed',render);

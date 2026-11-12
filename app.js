@@ -629,7 +629,7 @@
     const q=marketQuote(MarketQuotes.INDEX),price=Number(q?.price);
     if(!Number.isFinite(price)||price<=0)return null;
     const timestamp=q.quoteTime||q.lastUpdated,ms=MarketQuotes.timestamp(timestamp);
-    return {price, high:q.high, low:q.low, time:fmtTime(timestamp),date:q.date||(ms?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms)):null),source:q.source||'既有報價'};
+    return {price, high:q.high, low:q.low, quoteTime:q.quoteTime, time:fmtTime(timestamp),date:q.date||(ms?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms)):null),source:q.source||'既有報價'};
   }
   function updateQuoteEverywhere(symbol, quote) {
     const previous=state.quoteCache[symbol],older=MarketQuotes.timestamp(quote.quoteTime||quote.lastUpdated),newer=MarketQuotes.timestamp(previous?.quoteTime||previous?.lastUpdated);
@@ -1296,5 +1296,6 @@
   }
   window.exposureRiskBridge={getTarget:()=>Number(state.settings.targetBeta),setTarget:value=>{if(!Number.isFinite(value)||value<0||value>5)return;saveFamiliarValue('targetBeta',value);renderSettings();notify('已更新目標 Beta，請至再平衡頁確認調整。');}};
   window.exposureIndexQuote=indexQuoteReading;
+  window.exposureRefreshIndexQuote=()=>refreshQuotes(true);
   init();
 })();
