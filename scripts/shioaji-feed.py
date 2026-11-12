@@ -3,13 +3,16 @@
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import logging
+from logging.handlers import RotatingFileHandler
 from math import isfinite
 import os
 from pathlib import Path
+from queue import Queue
 import re
 import sys
-from threading import BoundedSemaphore, Event, Lock, Thread
-from time import monotonic, sleep
+from threading import BoundedSemaphore, Lock, Thread
+from time import sleep
 from urllib.parse import parse_qs, urlsplit
 
 import shioaji as sj
@@ -23,8 +26,13 @@ MAX_SYMBOLS = 100
 STREAM_INTERVAL = 20
 HOLDINGS_INTERVAL = 60
 STALE_SECONDS = 180
-RECONNECT_INTERVAL = 15 * 60
 TAIPEI = timezone(timedelta(hours=8))
+log = logging.getLogger("shioaji-relay")
+
+
+def log_broker_event(response_code, event_code, _info, _event):
+    if event_code in (0, 1, 2, 4, 12, 13, 17):
+        log.info("broker event=%s response=%s", event_code, response_code)
 
 
 def allowed_request(headers, remote_host, remote_login):
@@ -48,7 +56,7 @@ class QuoteFeed:
         self.asked = set()
         self.unsupported = set()
         self.quotes = {quote["symbol"]: quote for quote in previous_quotes}
-        self.requests = Event()
+        self.requests = Queue()
 
     def on_quote(self, event):
         try:
@@ -83,9 +91,9 @@ class QuoteFeed:
         with self.lock:
             new_symbols = [code for code in symbols if code not in self.asked]
             remaining = max(0, MAX_SYMBOLS - len(self.asked))
-            if new_symbols and remaining:
-                self.asked.update(new_symbols[:remaining])
-                self.requests.set()
+            for code in new_symbols[:remaining]:
+                self.asked.add(code)
+                self.requests.put_nowait(code)
             return self.snapshot(symbols)
 
     def market_stale(self, now):
@@ -110,54 +118,44 @@ class QuoteFeed:
 
     def run(self, keys):
         api = sj.Shioaji(simulation=True)
-        api.set_event_callback(lambda *_: None)
-        reconnect_after = 0
+        api.set_event_callback(log_broker_event)
+        try:
+            api.login(api_key=keys["api_key"], secret_key=keys["secret_key"], subscribe_trade=False)
+        except Exception as error:
+            log.warning("broker login failed: %s", type(error).__name__)
+            self.set_state("login_error")
+            return
+        finally:
+            keys.clear()
+        api.set_on_tick_stk_v1_callback(self.on_quote)
+        api.set_on_quote_idx_v1_callback(self.on_quote)
+        log.info("broker login succeeded")
+        self.set_state("connected")
         while True:
+            code = self.requests.get()
             try:
-                api.login(api_key=keys["api_key"], secret_key=keys["secret_key"], subscribe_trade=False)
-            except Exception:
-                self.set_state("login_error")
-                sleep(RECONNECT_INTERVAL)
-                continue
-            api.set_on_tick_stk_v1_callback(self.on_quote)
-            api.set_on_quote_idx_v1_callback(self.on_quote)
-            with self.lock:
-                self.unsupported.clear()
-                self.state = "connected"
-            reconnect_after = self.watch_quotes(api, max(reconnect_after, monotonic() + HOLDINGS_INTERVAL))
-
-    def watch_quotes(self, api, reconnect_after):
-        attempted = set()
-        while True:
-            self.requests.clear()
-            with self.lock:
-                pending = self.asked - attempted
-                stale = self.market_stale(datetime.now(TAIPEI))
-            if stale and monotonic() >= reconnect_after:
-                # A live HTTP stream can outlast the upstream quote session.
-                reconnect_after = monotonic() + RECONNECT_INTERVAL
-                self.set_state("reconnecting")
-                try:
-                    api.logout()
-                except Exception:
-                    self.set_state("connected")
-                else:
-                    return reconnect_after
-            for code in sorted(pending):
-                try:
-                    contract = api.contracts.get(code)
-                    if contract is None or contract.security_type not in (sj.SecurityType.Stock, sj.SecurityType.Index):
-                        raise LookupError(code)
-                    quote_type = sj.QuoteType.Quote if contract.security_type == sj.SecurityType.Index else sj.QuoteType.Tick
-                    api.subscribe(contract, quote_type=quote_type)
-                except Exception:
-                    with self.lock:
-                        self.unsupported.add(code)
-            attempted.update(pending)
-            self.requests.wait(STREAM_INTERVAL)
+                contract = api.contracts.get(code)
+                if contract is None or contract.security_type not in (sj.SecurityType.Stock, sj.SecurityType.Index):
+                    raise LookupError(code)
+                quote_type = sj.QuoteType.Quote if contract.security_type == sj.SecurityType.Index else sj.QuoteType.Tick
+                api.subscribe(contract, quote_type=quote_type)
+            except Exception as error:
+                if code in MARKET_SYMBOLS:
+                    log.warning("benchmark subscription failed: %s %s", code, type(error).__name__)
+                with self.lock:
+                    self.unsupported.add(code)
 
 
 def serve(keys):
+    log_path = os.environ.get("EXPOSURE_SHIOAJI_LOG_FILE")
+    if log_path:
+        try:
+            handler = RotatingFileHandler(log_path, maxBytes=65536, backupCount=1, encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+            log.addHandler(handler)
+            log.setLevel(logging.INFO)
+        except OSError:
+            pass
     feed = QuoteFeed(keys.pop("previous_quotes", ()))
     feed.read(MARKET_SYMBOLS)
     stream_slots = BoundedSemaphore(12)
