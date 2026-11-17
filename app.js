@@ -2,7 +2,8 @@
   'use strict';
   const STORE_KEY = 'exposureManager.v1';
   const defaults = {
-    holdings: [], cash: 0, history: [], quoteCache: {}, marketHistory: null, holdingHighs: {},
+    holdings: [], cash: 0, history: [], quoteCache: {}, marketHistory: null, indexHistory: [],
+    marginHistory: [], vixHistory: [], holdingHighs: {},
     settings: { targetBeta: 1, tolerance: 10, target: { lever: 20, core: 60, cash: 20 }, refreshSeconds: 60, benchmark: '0050' }
   };
   let isRefreshing = false;
@@ -61,6 +62,18 @@
     const minutes = Number(get('hour'))*60 + Number(get('minute'));
     return ['Mon','Tue','Wed','Thu','Fri'].includes(weekday) && minutes >= 510 && minutes <= 815;
   }
+  function mergeVixHistory(current, incoming) {
+    const byDate = new Map();
+    for (const rows of [current, incoming]) {
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) {
+        if (IndexRisk.validDate(row?.date) && Number.isFinite(row.close) && row.close>0) {
+          byDate.set(row.date,{date:row.date,close:row.close});
+        }
+      }
+    }
+    return [...byDate.values()].sort((a,b)=>a.date.localeCompare(b.date));
+  }
   function loadState() {
     try {
       const parsed = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
@@ -70,6 +83,9 @@
         settings: { ...clone(defaults.settings), ...(parsed.settings || {}), target: { ...clone(defaults.settings.target), ...((parsed.settings || {}).target || {}) } },
         holdings: Array.isArray(parsed.holdings) ? parsed.holdings : [],
         history: Array.isArray(parsed.history) ? parsed.history : [],
+        indexHistory: IndexRisk.mergeDailyBars(parsed.indexHistory),
+        marginHistory: MarginData.mergeHistory(parsed.marginHistory),
+        vixHistory: mergeVixHistory([], parsed.vixHistory),
         quoteCache: parsed.quoteCache || {}
       };
     } catch { return clone(defaults); }
@@ -844,7 +860,13 @@
       if(!confirm('匯入資料會覆蓋目前持倉與設定；歷史依日期合併，同一天以備份為準。確定繼續？'))return;
       const mergedHistory=new Map(state.history.map(row=>[row.date,row]));
       (Array.isArray(data.history)?data.history:[]).forEach(row=>mergedHistory.set(row.date,row));
-      state={...clone(defaults),...data,history:[...mergedHistory.values()],settings:{...clone(defaults.settings),...data.settings,target:{...clone(defaults.settings.target),...(data.settings.target||{})}}};persist();renderAll();renderSettings();notify('資料備份已匯入');
+      const indexHistory = IndexRisk.mergeDailyBars(state.indexHistory, data.indexHistory);
+      const marginHistory = MarginData.mergeHistory(state.marginHistory, data.marginHistory);
+      const vixHistory = mergeVixHistory(state.vixHistory, data.vixHistory);
+      state={...clone(defaults),...data,indexHistory,marginHistory,vixHistory,history:[...mergedHistory.values()],settings:{...clone(defaults.settings),...data.settings,target:{...clone(defaults.settings.target),...(data.settings.target||{})}}};
+      persist();renderAll();renderSettings();
+      window.dispatchEvent(new Event('exposure-market-history-changed'));
+      notify('資料備份已匯入');
     }catch(e){notify(`匯入失敗：${e.message}`);}
   }
   function bindEvents() {
@@ -895,7 +917,12 @@
     $('historyBody').addEventListener('click',e=>{const btn=e.target.closest('[data-delete-history]');if(!btn)return;const date=btn.dataset.deleteHistory;if(confirm(`確定刪除 ${date} 的快照？`)){state.history=state.history.filter(x=>x.date!==date);persist();renderHistory();}});
     $('clearHistoryBtn').addEventListener('click',()=>{if(confirm('確定清除所有歷史快照？建議先匯出 CSV。')){state.history=[];persist();renderHistory();notify('歷史紀錄已清除');}});
     $('backupBtn').addEventListener('click',backupData);$('restoreInput').addEventListener('change',e=>{if(e.target.files?.[0])restoreData(e.target.files[0]);e.target.value='';});
-    $('resetAllBtn').addEventListener('click',()=>{if(confirm('確定清空全部持倉、設定與歷史紀錄？此操作無法復原，建議先下載備份。')){state=clone(defaults);persist();renderAll();renderSettings();notify('所有資料已清空');}});
+    $('resetAllBtn').addEventListener('click',()=>{
+      if (!confirm('確定清空全部持倉、設定與歷史紀錄？此操作無法復原，建議先下載備份。')) return;
+      state=clone(defaults);persist();renderAll();renderSettings();
+      window.dispatchEvent(new Event('exposure-market-history-changed'));
+      notify('所有資料已清空');
+    });
     $('printPlanBtn').addEventListener('click',()=>window.print());
     document.querySelectorAll('[data-tip]').forEach(el=>el.addEventListener('click',()=>notify(el.dataset.tip)));
     document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelectorAll('.modal-backdrop.open').forEach(x=>closeModal(x.id));});
@@ -1299,6 +1326,28 @@
     if (shioajiEnabled) void refreshQuotes();
   }
   window.exposureRiskBridge={getTarget:()=>Number(state.settings.targetBeta),setTarget:value=>{if(!Number.isFinite(value)||value<0||value>5)return;saveFamiliarValue('targetBeta',value);renderSettings();notify('已更新目標 Beta，請至再平衡頁確認調整。');}};
+  window.exposureIndexHistory = {
+    read: () => state.indexHistory,
+    merge(rows) {
+      state.indexHistory = IndexRisk.mergeDailyBars(state.indexHistory, rows);
+      persist();
+      return state.indexHistory;
+    }
+  };
+  window.exposureMarginHistory = {
+    readMargin: () => state.marginHistory,
+    readVix: () => state.vixHistory,
+    mergeMargin(rows) {
+      state.marginHistory = MarginData.mergeHistory(state.marginHistory, rows);
+      persist();
+      return state.marginHistory;
+    },
+    mergeVix(rows) {
+      state.vixHistory = mergeVixHistory(state.vixHistory, rows);
+      persist();
+      return state.vixHistory;
+    }
+  };
   window.exposureIndexQuote=indexQuoteReading;
   window.exposureVixQuote=()=>indexQuoteReading(MarketQuotes.VIX);
   window.exposureRefreshIndexQuote=()=>refreshQuotes(true);

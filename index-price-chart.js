@@ -16,7 +16,13 @@ function renderSummary(){
  document.getElementById('indexPriceSummary').innerHTML=`<div><span>距近一年最高收盤</span><strong>${distance==null?'—':distance.toFixed(2)+'%'}</strong><small>${zone}</small></div><div><span>${quote?'目前指數':'最新收盤指數'}</span><strong>${price?fmt(price):'—'}</strong><small>${quote?esc(quote.time)+' · '+esc(quote.source||'報價'):esc(last?.date||'等待報價')}</small></div><div><span>VIXTWN</span><strong>${vixValue?fmt(vixValue):'—'}</strong><small>${esc(vixStatus)}</small></div><div><span>近一年最高收盤</span><strong>${high?fmt(high):'—'}</strong><small>${esc(highRow?.date||'')}</small></div>`;
 }
 function render(){
- if(all.length<2){renderSummary();return;}
+ if(all.length<2){
+   renderSummary();
+   document.getElementById('indexPriceSvg').textContent='';
+   document.getElementById('indexPriceDates').textContent='';
+   document.getElementById('indexKdContext').textContent='';
+   return;
+ }
  const last=all.at(-1),previous=all.at(-2),high=Math.max(...all.map(r=>r.close));
  const quote=latestQuote(last);
  let plot=all;

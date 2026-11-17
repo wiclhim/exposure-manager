@@ -1,9 +1,10 @@
 (()=>{
   'use strict';
   const KEY='exposureIndexRisk.v1';
-  const CACHE_KEY='exposureIndexCache.v3';
+  const LEGACY_CACHE_KEY='exposureIndexCache.v3';
+  const historyStore=window.exposureIndexHistory;
   let config;try{config=JSON.parse(localStorage.getItem(KEY)||'{}');}catch{config={};}
-  let payload=null,range=60,live=window.exposureIndexQuote?.(),loading=false,lastFetch=0;
+  let range=60,live=window.exposureIndexQuote?.(),loading=false,lastFetch=0,historyVersion=0;
   let liveBar=MarketQuotes.shioajiIndexBar(live), closingBar=liveBar?.closed?liveBar:null, signalRows=null;
   if(config.baselinePreset!=='1.30'){config.baseline=1.3;config.baselinePreset='1.30';localStorage.setItem(KEY,JSON.stringify(config));}
   const panel=document.createElement('article');panel.className='panel index-signals-panel';
@@ -35,6 +36,10 @@
       preview.textContent='等待永豐提供當日高低點，收盤建議以已確認日線為準。';
       return;
     }
+    if(last.date < MarketQuotes.previousWeekday(liveBar.date)){
+      preview.textContent='歷史日線待補齊，收盤建議以最後一筆完整資料為準。';
+      return;
+    }
     const {advice}=adviceFor(IndexRisk.calculate([...signalRows,liveBar]));
     preview.textContent=`即時試算 Beta ${fmt(advice.next)} · 依永豐指數與當日高低點計算，待收盤報價。`;
   }
@@ -48,19 +53,32 @@
     return `<svg viewBox="0 0 760 190" role="img" aria-label="${keys.join('、')} 最近 ${rows.length} 個交易日走勢">${svg}</svg>`;
   }
   function render(){
-    if(!payload)return;
-    const openDetails=new Map([...panel.querySelectorAll('details[id]')].map(el=>[el.id,el.open]));
-    const historyLast=payload.data.at(-1);
-    const useShioajiClose=closingBar?.date>=historyLast.date&&!staleDate(historyLast.date);
-    let data=payload.data;
-    if(useShioajiClose){
-      const firstDay=new Date(closingBar.date+'T00:00:00Z');
-      firstDay.setUTCDate(firstDay.getUTCDate()-364);
-      const from=firstDay.toISOString().slice(0,10);
-      // calculate() replaces a same-date row and recomputes the indicators.
-      data=IndexRisk.calculate([...data.filter(row=>row.date>=from),closingBar]);
+    const history=historyStore.read(), latest=history.at(-1);
+    if(!latest){
+      signalRows=null;
+      window.dispatchEvent(new CustomEvent('exposure-index-data',{detail:[]}));
+      $('indexSignalsStatus').textContent='尚無加權指數日線，可按「更新指數」取得。';
+      $('indexSignalsContent').textContent='';
+      $('betaHeatComparison').textContent='';
+      renderLive();
+      return;
     }
-    const all=RiskPolicy.decorate(data),last=all.at(-1),rows=all.slice(-range);
+    const firstDay=new Date(latest.date+'T00:00:00Z');
+    firstDay.setUTCDate(firstDay.getUTCDate()-364);
+    const from=firstDay.toISOString().slice(0,10);
+    const data=history.filter(row=>row.date>=from);
+    const source=latest.quoteTime?'永豐 Shioaji 收盤報價':'臺灣證券交易所收盤日線';
+    $('indexSignalsStatus').textContent=`${latest.date} 已收盤 · 臺灣加權指數 ${fmtIndex(latest.close)} 點 · ${source}`;
+    if(data.length<70){
+      signalRows=null;
+      window.dispatchEvent(new CustomEvent('exposure-index-data',{detail:data}));
+      $('indexSignalsContent').textContent='近一年日線少於 70 筆，暫停計算 Beta 建議。';
+      $('betaHeatComparison').textContent='';
+      renderLive();
+      return;
+    }
+    const openDetails=new Map([...panel.querySelectorAll('details[id]')].map(el=>[el.id,el.open]));
+    const all=RiskPolicy.decorate(IndexRisk.calculate(data)),last=all.at(-1),rows=all.slice(-range);
     signalRows=all;
     const {current,base,daysSinceApplied,execution,model,advice}=adviceFor(all);
     const stale=staleDate(last.date),cooldown=advice.cooldown;
@@ -71,8 +89,6 @@
     const notice=stale?'日線資料已超過 7 天，暫停採用建議。':cooldown?(daysSinceApplied===0?'同一日線已採用，暫停重複調整。':'距上次採用不足 5 個交易日，暫停本次調整。'):'採用只更新目標 Beta；持倉請到再平衡頁確認。';
     const reasons=advice.reasons.length?advice.reasons.map(escape).join('；'):'目前未符合轉弱防守條件。';
     window.dispatchEvent(new CustomEvent('exposure-index-data',{detail:all}));
-    const source=useShioajiClose?'永豐 Shioaji 收盤報價':payload.source;
-    $('indexSignalsStatus').textContent=`${last.date} 已收盤 · ${payload.name} ${fmtIndex(last.close)} 點 · ${source}`;
     renderLive();
     $('indexSignalsContent').innerHTML=`
       <section class="beta-unified" aria-label="整合 Beta 建議">
@@ -114,37 +130,37 @@
     $('indexBaseline').addEventListener('change',e=>{const v=Number(e.target.value);if(Number.isFinite(v)&&v>=0&&v<=5){config.baseline=v;save();render();}});
     $('indexApplyBeta').addEventListener('click',()=>{if(stale||cooldown)return;config.baseline=base;window.exposureRiskBridge.setTarget(advice.next);config.appliedDate=last.date;save();render();});
   }
-  function waitingForClose(lastDate){
-    const taipei=new Date(Date.now()+8*3600000);
-    const day=taipei.getUTCDay(),minutes=taipei.getUTCHours()*60+taipei.getUTCMinutes();
-    return day>=1&&day<=5&&minutes>=13*60+45&&lastDate<taipei.toISOString().slice(0,10);
+  function saveClosingBar(){
+    const last=historyStore.read().at(-1);
+    if(!closingBar || !last || closingBar.date<last.date || last.date<MarketQuotes.previousWeekday(closingBar.date)) return false;
+    if(closingBar.date===last.date && closingBar.quoteTime<=(last.quoteTime??0)) return false;
+    historyStore.merge([closingBar]);
+    return true;
   }
   function refreshCloseIfDue(){
-    const last=payload?.data.at(-1);
-    if(!last||document.hidden||!waitingForClose(last.date))return;
+    const last=historyStore.read().at(-1);
+    if(!last||document.hidden)return;
+    if(last.date>=MarketQuotes.expectedClosingDay())return;
     const retry=live?.date>last.date?300000:3600000;
-    if(Date.now()-lastFetch>=retry)void refresh(true);
+    if(Date.now()-lastFetch>=retry)void refresh();
   }
-  async function refresh(force=false){
+  async function refresh(){
     if(loading)return;
     loading=true;
     $('indexSignalsRefresh').disabled=true;
+    const version=historyVersion, after=historyStore.read().at(-1)?.date;
     try{
-      if(!payload){
-        const cached=JSON.parse(sessionStorage.getItem(CACHE_KEY)||'null');
-        const lastDate=cached?.payload?.data.at(-1)?.date;
-        if(lastDate){
-          payload=cached.payload;
-          if(!force&&Date.now()-cached.at<(waitingForClose(lastDate)?300000:3600000)){
-            lastFetch=cached.at;render();return;
-          }
-        }
-      }
       lastFetch=Date.now();
-      const response=await fetch('/api/index-signals'),data=await response.json();if(!response.ok)throw new Error(data.error||'讀取失敗');
-      payload=data;sessionStorage.setItem(CACHE_KEY,JSON.stringify({at:lastFetch,payload}));render();
+      const path=after?'/api/index-signals?'+new URLSearchParams({after}):'/api/index-signals';
+      const response=await fetch(path),data=await response.json();
+      if(version!==historyVersion)return;
+      if(!response.ok||!Array.isArray(data.data))throw new Error(data.error||'讀取失敗');
+      if(data.data.length)historyStore.merge(data.data);
+      saveClosingBar();
+      render();
     }catch(e){
-      if(payload){render();$('indexSignalsStatus').textContent+=' · 歷史日線更新暫時失敗';}
+      if(version!==historyVersion)return;
+      if(historyStore.read().length){render();$('indexSignalsStatus').textContent+=' · 新日線暫時無法取得';}
       else{$('indexSignalsStatus').textContent=`日線更新失敗：${e.message}。暫不產生新建議。`;}
     }
     finally{loading=false;$('indexSignalsRefresh').disabled=false;}
@@ -152,7 +168,7 @@
   panel.addEventListener('click',e=>{const b=e.target.closest('[data-days]');if(b){range=Number(b.dataset.days);render();}});
   $('indexSignalsRefresh').addEventListener('click',()=>{
     void window.exposureRefreshIndexQuote?.();
-    void refresh(true);
+    void refresh();
   });
   window.addEventListener('exposure-index-quote',event=>{
     live=event.detail;
@@ -160,12 +176,31 @@
     if(liveBar?.closed&&liveBar.quoteTime>=(closingBar?.quoteTime??0)&&
       ['quoteTime','high','low','close'].some(key=>liveBar[key]!==closingBar?.[key])){
       closingBar=liveBar;
-      if(payload){render();return;}
+      if(saveClosingBar()){render();return;}
     }
     renderLive();
   });
   document.addEventListener('visibilitychange',refreshCloseIfDue);
   setInterval(refreshCloseIfDue,300000);
   window.addEventListener('exposure-target-changed',render);
-  window.addEventListener('exposure-overheat-report-ready',()=>{if(payload)render();});renderLive();refresh();
+  window.addEventListener('exposure-overheat-report-ready',()=>{if(historyStore.read().length)render();});
+  window.addEventListener('exposure-market-history-changed',()=>{
+    historyVersion++;
+    render();
+  });
+  if(!historyStore.read().length){
+    try{
+      const cached=JSON.parse(sessionStorage.getItem(LEGACY_CACHE_KEY)||'null');
+      if(Array.isArray(cached?.payload?.data))historyStore.merge(cached.payload.data);
+    }catch{}
+  }
+  try{sessionStorage.removeItem(LEGACY_CACHE_KEY);}catch{}
+  if(historyStore.read().length){
+    saveClosingBar();
+    render();
+    refreshCloseIfDue();
+  }else{
+    renderLive();
+    void refresh();
+  }
 })();

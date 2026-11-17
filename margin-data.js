@@ -36,6 +36,9 @@
       return { date: row.date, listedBalance: row.balance, otcBalance: available ? otcBalance : null,
         balance: available ? row.balance + otcBalance : null };
     });
+    return withChanges(totals);
+  }
+  function withChanges(totals) {
     return totals.map((row, i) => {
       const previous = totals[i - 1]?.balance;
       const window = i >= 19 ? totals.slice(i - 19, i + 1) : [];
@@ -46,6 +49,26 @@
           ? window.reduce((sum, day) => sum + day.balance, 0) / 20 : null
       };
     });
+  }
+  function mergeHistory(...histories) {
+    const byDate = new Map();
+    for (const rows of histories) {
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) {
+        if (typeof row?.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(row.date)) continue;
+        const day = new Date(row.date + 'T00:00:00Z');
+        if (!Number.isFinite(day.getTime()) || day.toISOString().slice(0, 10) !== row.date) continue;
+        const previous = byDate.get(row.date);
+        const listedBalance = Number.isFinite(row.listedBalance) && row.listedBalance >= 0 ? row.listedBalance : previous?.listedBalance ?? null;
+        const otcBalance = Number.isFinite(row.otcBalance) && row.otcBalance >= 0 ? row.otcBalance : previous?.otcBalance ?? null;
+        const keepRate = Number.isFinite(row.keepRate) && row.keepRate > 0 ? row.keepRate : previous?.keepRate ?? null;
+        if (listedBalance == null && otcBalance == null && keepRate == null) continue;
+        const balance = listedBalance != null && otcBalance != null ? listedBalance + otcBalance : null;
+        byDate.set(row.date, { date: row.date, listedBalance, otcBalance, balance, keepRate });
+      }
+    }
+    const sorted = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+    return withChanges(sorted);
   }
   function normalizeMaintenance(body){
     if(body?.stat!=='OK'||!Array.isArray(body.data))throw new Error('證交所暫無維持率資料');
@@ -70,5 +93,5 @@
     if(current.length)groups.push(current);
     return groups;
   }
-  return {normalize,summary,addOtcBalance,normalizeMaintenance,combine,segments};
+  return {normalize,summary,addOtcBalance,normalizeMaintenance,combine,segments,mergeHistory};
 });

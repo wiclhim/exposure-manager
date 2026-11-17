@@ -42,5 +42,18 @@
     const p=Number(price),h=Number(high);
     return Number.isFinite(p)&&Number.isFinite(h)&&p>0&&h>0?Math.max(0,(h-p)/p*100):null;
   }
-  return {INDEX,VIX,symbol,symbols,marketSymbols,privateOrigin,timestamp,localBatch,shioajiIndexBar,gainToHigh};
+  function previousWeekday(date) {
+    const day = new Date(date + 'T00:00:00Z');
+    do { day.setUTCDate(day.getUTCDate() - 1); }
+    while (day.getUTCDay() === 0 || day.getUTCDay() === 6);
+    return day.toISOString().slice(0, 10);
+  }
+  function expectedClosingDay(now = Date.now()) {
+    const taipei = new Date(now + 8 * 3600000);
+    const weekday = taipei.getUTCDay();
+    const minutes = taipei.getUTCHours() * 60 + taipei.getUTCMinutes();
+    const today = taipei.toISOString().slice(0, 10);
+    return weekday >= 1 && weekday <= 5 && minutes >= 13 * 60 + 45 ? today : previousWeekday(today);
+  }
+  return {INDEX,VIX,symbol,symbols,marketSymbols,privateOrigin,timestamp,localBatch,shioajiIndexBar,gainToHigh,previousWeekday,expectedClosingDay};
 });

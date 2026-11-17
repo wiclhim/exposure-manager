@@ -1,5 +1,7 @@
 (()=>{'use strict';
-  let payload=null,range=30,mobile=window.matchMedia('(max-width:640px)').matches;
+  const historyStore=window.exposureMarginHistory;
+  const legacyCacheKey='exposureMarginCache.v3';
+  let payload=null,range=30,mobile=window.matchMedia('(max-width:640px)').matches,historyVersion=0;
   const panel=document.createElement('article');panel.className='panel margin-panel';
   panel.innerHTML='<div class="panel-top"><div><div class="section-label">TAIEX · MARGIN BALANCE</div><h2>上市櫃融資水位</h2></div><button type="button" class="secondary-button small" id="marginRefresh">更新融資</button></div><p id="marginStatus" role="status">正在取得證交所盤後資料…</p><div id="marginContent"></div><p class="margin-note">融資餘額為上市與上櫃同日金額合計。任一市場缺資料時，該日留白。維持率涵蓋上市櫃的融資與融券。</p><small>資料來源：<a href="https://www.twse.com.tw/zh/trading/margin/mi-margn.html" target="_blank" rel="noopener noreferrer">證交所信用交易統計</a>、<a href="https://www.tpex.org.tw/zh-tw/market-infomation.html" target="_blank" rel="noopener noreferrer">櫃買中心</a>、<a href="https://www.twse.com.tw/dashboard/zh/credit/margin.html" target="_blank" rel="noopener noreferrer">臺股儀表板</a> · 僅供觀察，不更動 Beta 規則。</small>';
   document.querySelector('.index-price-panel').insertAdjacentElement('afterend',panel);
@@ -50,26 +52,37 @@
     inspectVix(lastIndex);
   }
 
-  async function refreshVix() {
+  function showVix(rows) {
+    vixData=rows;
+    window.dispatchEvent(new CustomEvent('exposure-vix-close',{detail:rows.at(-1)??null}));
+    if(!rows.length)$('vixReading').textContent='尚無 VIXTWN 日線，可按「更新資料」取得。';
+    renderVix();
+  }
+  async function refreshVix(version) {
     try {
       const response = await fetch('/api/vix');
       if (!response.ok) throw new Error('VIXTWN unavailable');
       const { data } = await response.json();
+      if(version!==historyVersion)return;
       if (!Array.isArray(data) || !data.length || !data.every(row =>
         /^\d{4}-\d{2}-\d{2}$/.test(row?.date) && Number.isFinite(row.close) && row.close > 0)) {
         throw new Error('Invalid VIXTWN data');
       }
-      vixData = data;
       vixFailed = false;
-      window.dispatchEvent(new CustomEvent('exposure-vix-close', { detail: data.at(-1) }));
+      showVix(historyStore.mergeVix(data));
     } catch {
+      if(version!==historyVersion)return;
       vixFailed = true;
+      renderVix();
     }
-    renderVix();
   }
-  function inspect(i){const row=payload.data.slice(-range)[i];if(row)$('marginInspect').textContent=`${row.date}｜融資 ${fmt(row.balance)} 億元｜日增減 ${signed(row.change)} 億元｜20 日均線 ${fmt(row.ma20)} 億元｜整戶維持率 ${row.keepRate==null?'未提供':fmt(row.keepRate)+'%'}`;}
+  function inspect(i){const row=payload?.data.slice(-range)[i];if(row)$('marginInspect').textContent=`${row.date}｜融資 ${fmt(row.balance)} 億元｜日增減 ${signed(row.change)} 億元｜20 日均線 ${fmt(row.ma20)} 億元｜整戶維持率 ${row.keepRate==null?'未提供':fmt(row.keepRate)+'%'}`;}
   function render(){
-    if(!payload)return;
+    if(!payload){
+      $('marginStatus').textContent='尚無融資日線，可按「更新資料」取得。';
+      $('marginContent').textContent='';
+      return;
+    }
     const all=payload.data,rows=all.slice(-range),s=MarginData.summary(all),last=s.last;
     const stale=last&&(Date.now()-Date.parse(last.date+'T00:00:00+08:00'))/86400000>7;
     const rates=rows.filter(r=>Number.isFinite(r.keepRate)),lastRate=rates.at(-1);
@@ -115,21 +128,34 @@
     $('marginContent').innerHTML=`<div class="margin-summary"><div><span>融資餘額</span><strong>${fmt(last?.balance)}<small> 億元</small></strong><small>${last?`上市 ${fmt(last.listedBalance)} ＋ 上櫃 ${fmt(last.otcBalance)}`:"等待合計資料"}</small></div><div><span>單日增減</span><strong style="color:${color(s.dayChange)}">${signed(s.dayChange)}<small> 億元</small></strong><small>上市 ${signed(s.listedDayChange)} 億元<br>上櫃 ${signed(s.otcDayChange)} 億元</small><small>${s.dayPercent==null?'資料不足':signed(s.dayPercent)+'%'}</small></div><div><span>近 5 個交易日增減</span><strong style="color:${color(s.fiveChange)}">${signed(s.fiveChange)}<small> 億元</small></strong><small>${s.fivePercent==null?'資料不足':signed(s.fivePercent)+'%'}</small></div></div><div class="margin-toolbar"><div class="index-range">${[30,60,90].map(n=>`<button type="button" data-margin-days="${n}" aria-pressed="${range===n}">近 ${n} 日</button>`).join('')}</div><span>${rows[0].date} — ${rows.at(-1).date}</span></div><p id="marginCoverage" class="margin-note">近 ${range} 個交易日：融資合計 ${balanceCount} 筆、維持率 ${rates.length} 筆。${balanceCount<rows.length?' 缺少同日上市或上櫃資料的日期留白。':''}${payload.otcError?' 櫃買中心暫時無法重新查詢，顯示已取得資料。':''}${rates.length<rows.length?'維持率官方自 2026/08/03 起提供，缺漏日期留白。':''}${payload.maintenance?.error?' 維持率服務暫時無法取得，請稍後重試。':''}${payload.historyIncomplete||payload.maintenance?.historyIncomplete?' 歷史資料補取未完整，暫顯示已取得部分。':''}</p><div class="margin-chart"><svg viewBox="0 0 ${chartWidth} 545" role="img" aria-label="上市櫃融資餘額、20 日均線、單日增減及全市場整戶擔保維持率趨勢">${svg}</svg></div><div class="margin-legend"><span>綠線：融資餘額</span><span>金色虛線：20 日均線</span><span>柱狀：紅增／綠減</span><span class="maintenance-legend">紫線：全市場整戶維持率</span></div><p id="marginInspect" class="margin-inspect" role="status"></p><p class="margin-note">滑過或點選圖表可查看當日數字。日增減為相鄰資料日餘額之差；近 5 日比較最新與 5 個交易日前。均線不足 20 筆時不繪製。維持率以相同日期對齊，缺資料不補值、不跨缺口連線。</p>`;
     inspect(rows.length-1);
   }
-  async function refresh(force=false){
+  function renderMargin(rows, metadata={}) {
+    const latest=rows.findLast(row=>Number.isFinite(row.keepRate));
+    payload=rows.length?{...metadata,data:rows,maintenance:{...metadata.maintenance,latest}}:null;
+    render();
+  }
+  async function refresh(version){
     try{
-      if(!force){try{const c=JSON.parse(sessionStorage.getItem('exposureMarginCache.v3')||'null');if(c&&c.payload?.version===3&&Date.now()-c.at<(c.payload.otcError||c.payload.data.at(-1)?.balance==null||c.payload.maintenance?.error||c.payload.historyIncomplete||c.payload.maintenance?.historyIncomplete?300000:3600000)&&c.payload.data?.length>=2){payload=c.payload;render();return;}}catch{}}
       const response=await fetch('/api/margin?v=3'),data=await response.json();
+      if(version!==historyVersion)return;
       if(!response.ok||data.version!==3||!Array.isArray(data.data)||data.data.length<2)throw new Error('融資資料暫時無法取得');
-      payload=data;render();try{sessionStorage.setItem('exposureMarginCache.v3',JSON.stringify({at:Date.now(),payload}));}catch{}
+      renderMargin(historyStore.mergeMargin(data.data),data);
     }catch{
+      if(version!==historyVersion)return;
       if(payload){render();$('marginStatus').textContent+=' · 本次更新失敗，保留上次資料';}
       else{$('marginStatus').textContent='融資資料暫時無法取得，請稍後按「更新資料」重試。';$('marginContent').textContent='';}
     }
   }
   async function refreshCharts(force = false) {
     const button = $('marginRefresh');
+    const version=historyVersion, due=MarketQuotes.expectedClosingDay();
+    const latestMargin=payload?.data.at(-1);
+    const updateMargin=force||!latestMargin||latestMargin.date<due||latestMargin.balance==null||latestMargin.keepRate==null;
+    const updateVix=force||!vixData.length||vixData.at(-1).date<due;
+    if(!updateMargin&&!updateVix)return;
     button.disabled = true;
-    try { await Promise.all([refresh(force), refreshVix()]); }
+    try {
+      await Promise.all([updateMargin?refresh(version):null,updateVix?refreshVix(version):null]);
+    }
     finally { button.disabled = false; }
   }
   panel.addEventListener('click',e=>{const button=e.target.closest('[data-margin-days]');if(button){range=Number(button.dataset.marginDays);render();renderVix();}const point=e.target.closest('[data-margin-point]');if(point)inspect(Number(point.dataset.marginPoint));});
@@ -142,5 +168,22 @@
   vix.addEventListener('pointermove', selectVixPoint);
   $('marginRefresh').addEventListener('click',()=>refreshCharts(true));
   window.matchMedia('(max-width:640px)').addEventListener('change',e=>{mobile=e.matches;render();renderVix();});
+  function showSavedHistory() {
+    vixFailed=false;
+    renderMargin(historyStore.readMargin());
+    showVix(historyStore.readVix());
+  }
+  window.addEventListener('exposure-market-history-changed',()=>{
+    historyVersion++;
+    showSavedHistory();
+  });
+  try {
+    const cached=JSON.parse(sessionStorage.getItem(legacyCacheKey)||'null');
+    if(!historyStore.readMargin().length&&cached?.payload?.version===3&&Array.isArray(cached.payload.data)){
+      historyStore.mergeMargin(cached.payload.data);
+    }
+    sessionStorage.removeItem(legacyCacheKey);
+  }catch{}
+  showSavedHistory();
   refreshCharts();
 })();

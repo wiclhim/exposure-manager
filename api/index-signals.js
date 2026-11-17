@@ -1,4 +1,4 @@
-const { calculate } = require('../risk-engine');
+const { calculate, validDate } = require('../risk-engine');
 
 const monthCache = new Map();
 const MONTH = 'https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST';
@@ -35,6 +35,10 @@ async function monthRows(month, currentMonth) {
 
 module.exports = async function handler(req, res) {
   if (req.method !== 'GET') return res.status(405).json({ error: 'Method not allowed' });
+  const after = req.query?.after;
+  if (after !== undefined && !validDate(after)) {
+    return res.status(400).json({ error: '日線起始日期格式錯誤' });
+  }
   const now = new Date();
   const taipei = new Date(now.getTime() + 8 * 3600000);
   const today = taipei.toISOString().slice(0, 10);
@@ -46,17 +50,22 @@ module.exports = async function handler(req, res) {
   const start = new Date(end);
   start.setUTCDate(start.getUTCDate() - 364);
   const from = start.toISOString().slice(0, 10);
+  const firstMissingDay = new Date((after || from) + 'T00:00:00Z');
+  if (after) firstMissingDay.setUTCDate(firstMissingDay.getUTCDate() + 1);
+  const firstMonth = firstMissingDay > start ? firstMissingDay.toISOString().slice(0, 7) : from.slice(0, 7);
   const months = [];
-  for (let cursor = new Date(from.slice(0, 7) + '-01T00:00:00Z'); cursor <= end; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
-    months.push(cursor.toISOString().slice(0, 7));
+  if (!after || after < to) {
+    for (let cursor = new Date(firstMonth + '-01T00:00:00Z'); cursor <= end; cursor.setUTCMonth(cursor.getUTCMonth() + 1)) {
+      months.push(cursor.toISOString().slice(0, 7));
+    }
   }
   try {
     const rows = (await Promise.all(months.map(month => monthRows(month, taipei.toISOString().slice(0, 7))))).flat()
-      .filter(row => row.date >= from && row.date <= to);
-    if (rows.length < 200) throw new Error('近一年有效交易日不足，暫停計算指標');
+      .filter(row => row.date >= from && row.date <= to && (!after || row.date > after));
+    if (!after && rows.length < 200) throw new Error('近一年有效交易日不足，暫停計算指標');
     const hasTodayClose = rows.some(row => row.date === today);
     res.setHeader('Cache-Control', hasTodayClose ? 's-maxage=3600' : 's-maxage=300');
-    return res.status(200).json({ symbol: 'IX0001', name: '臺灣加權指數', source: '臺灣證券交易所收盤日線', fetchedAt: now.toISOString(), data: calculate(rows) });
+    return res.status(200).json({ symbol: 'IX0001', name: '臺灣加權指數', source: '臺灣證券交易所收盤日線', fetchedAt: now.toISOString(), data: after ? rows : calculate(rows) });
   } catch (error) {
     res.setHeader('Cache-Control', 'no-store');
     return res.status(502).json({ error: error.message });

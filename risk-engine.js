@@ -1,5 +1,26 @@
 (function(root,factory){if(typeof module==='object'&&module.exports)module.exports=factory();else root.IndexRisk=factory();})(typeof globalThis!=='undefined'?globalThis:this,function(){
   'use strict';
+  function validDate(date) {
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+    const day = new Date(date + 'T00:00:00Z');
+    return Number.isFinite(day.getTime()) && day.toISOString().slice(0, 10) === date;
+  }
+  function mergeDailyBars(...histories) {
+    const byDate = new Map();
+    for (const rows of histories) {
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) {
+        if (!validDate(row?.date)) continue;
+        const { date, high, low, close, quoteTime } = row;
+        if (![high, low, close].every(value => Number.isFinite(value) && value > 0) ||
+            low > close || close > high) continue;
+        byDate.set(date, Number.isFinite(quoteTime) && quoteTime > 0
+          ? { date, high, low, close, quoteTime }
+          : { date, high, low, close });
+      }
+    }
+    return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+  }
   function ema(values,period){let seed=[],previous=null;return values.map(value=>{if(value==null)return null;if(previous==null){seed.push(value);if(seed.length<period)return null;previous=seed.reduce((a,b)=>a+b,0)/period;}else previous=value*2/(period+1)+previous*(1-2/(period+1));return previous;});}
   function calculate(input){
     const seen=new Map();input.forEach(row=>{if(row.date&&[row.high,row.low,row.close].every(v=>Number.isFinite(Number(v))&&Number(v)>0)&&Number(row.high)>=Number(row.low))seen.set(row.date,{date:row.date,high:Number(row.high),low:Number(row.low),close:Number(row.close)});});
@@ -26,5 +47,5 @@
     });
   }
   function recommendation(rows,baseline,current){const last=rows[rows.length-1];if(!last?.ready)throw new Error('資料不足');const multiplier=[1,.85,.65,.5][last.stage];const ceiling=Math.round(baseline*multiplier*100)/100;const next=Math.round((current>ceiling?Math.max(ceiling,current-.1):Math.min(ceiling,current+.1))*100)/100;return {stage:last.stage,multiplier,ceiling,next,date:last.date};}
-  return {ema,calculate,recommendation};
+  return {ema,calculate,recommendation,mergeDailyBars,validDate};
 });
