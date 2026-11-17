@@ -21,6 +21,7 @@ import shioaji as sj
 PORT = 8765
 SITE = "https://exposure-manager.vercel.app"
 INDEX = "IX0001"
+VIX = "TAIWANVIX"
 MARKET_SYMBOLS = ("0050", INDEX)
 MAX_SYMBOLS = 100
 STREAM_INTERVAL = 20
@@ -33,6 +34,8 @@ log = logging.getLogger("shioaji-relay")
 def log_broker_event(response_code, event_code, _info, _event):
     if event_code in (0, 1, 2, 4, 12, 13, 17):
         log.info("broker event=%s response=%s", event_code, response_code)
+    elif event_code == 16 and VIX in (_info or ""):
+        log.info("VIX subscription acknowledged: response=%s", response_code)
 
 
 def allowed_request(headers, remote_host, remote_login):
@@ -140,7 +143,7 @@ class QuoteFeed:
                 quote_type = sj.QuoteType.Quote if contract.security_type == sj.SecurityType.Index else sj.QuoteType.Tick
                 api.subscribe(contract, quote_type=quote_type)
             except Exception as error:
-                if code in MARKET_SYMBOLS:
+                if code in (*MARKET_SYMBOLS, VIX):
                     log.warning("benchmark subscription failed: %s %s", code, type(error).__name__)
                 with self.lock:
                     self.unsupported.add(code)
@@ -157,7 +160,7 @@ def serve(keys):
         except OSError:
             pass
     feed = QuoteFeed(keys.pop("previous_quotes", ()))
-    feed.read(MARKET_SYMBOLS)
+    feed.read((*MARKET_SYMBOLS, VIX))
     stream_slots = BoundedSemaphore(12)
     remote_host = os.environ.get("EXPOSURE_TAILSCALE_HOST")
     remote_login = os.environ.get("EXPOSURE_TAILSCALE_LOGIN")
@@ -229,7 +232,7 @@ def serve(keys):
             self.quote_headers(origin, "text/event-stream; charset=utf-8")
             self.end_headers()
             self.connection.settimeout(5)
-            market_symbols = symbols[:1] if symbols[0] == INDEX else symbols[:2]
+            market_symbols = [code for code in symbols if code in (symbols[0], INDEX, VIX)]
             previous_market = None
             cycle = 0
             try:

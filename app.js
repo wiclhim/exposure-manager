@@ -179,7 +179,7 @@
       return `<tr><td><div class="overview-asset"><div class="overview-asset-heading"><strong title="${symbol}">${symbol}</strong><span class="tag ${categoryClass(h.category)}" title="${category}">${h.category==='cash'?'類現金':category}</span></div><small title="${name}">${name}</small></div></td><td class="right">${price ? money2(price) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${number(h.quantity)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td><td class="right">${high?`${money2(high.highPrice)}<small class="holding-high-date">${escapeHtml(high.highPriceDate||'')}</small>`:'—'}</td><td class="right">${gain==null?'—':gain===0?'已達高點':`+${gain.toFixed(2)}%`}</td></tr>`;
     }).join('');
     renderMarketCard();
-    window.dispatchEvent(new CustomEvent('exposure-index-quote',{detail:indexQuoteReading()}));
+    publishIndexQuotes();
   }
   function renderMarketCard() {
     const symbol = String(state.settings.benchmark || '0050').toUpperCase();
@@ -381,7 +381,7 @@
     if (!quotes.length) throw new Error('等待永豐推播此標的的報價');
     return quotes[0];
   }
-  function currentQuoteSymbols(extra='') { return MarketQuotes.symbols([...MarketQuotes.marketPair(state.settings.benchmark),...state.holdings.map(h=>h.symbol),extra]); }
+  function currentQuoteSymbols(extra='') { return MarketQuotes.symbols([...MarketQuotes.marketSymbols(state.settings.benchmark),...state.holdings.map(h=>h.symbol),extra]); }
   async function fetchShioajiQuotes(symbols, interactive=false, origin=quoteOrigin(), token=ngrokToken) {
     if (!interactive && origin === SHIOAJI_LOCAL) {
       const permission = await navigator.permissions?.query({ name:'loopback-network' }).catch(()=>null);
@@ -567,7 +567,7 @@
   }
   function connectMarketStream() {
     if (document.hidden) return;
-    const marketSymbols = MarketQuotes.marketPair(state.settings.benchmark);
+    const marketSymbols = MarketQuotes.marketSymbols(state.settings.benchmark);
     const symbols = currentQuoteSymbols().slice(0, 100);
     const origin = quoteOrigin();
     const key = origin + '|' + symbols.join(',');
@@ -613,7 +613,7 @@
         marketFrame = requestAnimationFrame(() => {
           marketFrame = null;
           renderMarketCard();
-          window.dispatchEvent(new CustomEvent('exposure-index-quote', { detail:indexQuoteReading() }));
+          publishIndexQuotes();
         });
       }
     };
@@ -625,11 +625,15 @@
       if (origin === SHIOAJI_NGROK) void refreshQuotes(false, true);
     };
   }
-  function indexQuoteReading() {
-    const q=marketQuote(MarketQuotes.INDEX),price=Number(q?.price);
+  function indexQuoteReading(symbol=MarketQuotes.INDEX) {
+    const q=marketQuote(symbol),price=Number(q?.price);
     if(!Number.isFinite(price)||price<=0)return null;
     const timestamp=q.quoteTime||q.lastUpdated,ms=MarketQuotes.timestamp(timestamp);
     return {price, high:q.high, low:q.low, quoteTime:q.quoteTime, time:fmtTime(timestamp),date:q.date||(ms?new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Taipei',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms)):null),source:q.source||'既有報價'};
+  }
+  function publishIndexQuotes() {
+    window.dispatchEvent(new CustomEvent('exposure-index-quote', {detail:indexQuoteReading()}));
+    window.dispatchEvent(new CustomEvent('exposure-vix-quote', {detail:indexQuoteReading(MarketQuotes.VIX)}));
   }
   function updateQuoteEverywhere(symbol, quote) {
     const previous=state.quoteCache[symbol],older=MarketQuotes.timestamp(quote.quoteTime||quote.lastUpdated),newer=MarketQuotes.timestamp(previous?.quoteTime||previous?.lastUpdated);
@@ -1296,6 +1300,7 @@
   }
   window.exposureRiskBridge={getTarget:()=>Number(state.settings.targetBeta),setTarget:value=>{if(!Number.isFinite(value)||value<0||value>5)return;saveFamiliarValue('targetBeta',value);renderSettings();notify('已更新目標 Beta，請至再平衡頁確認調整。');}};
   window.exposureIndexQuote=indexQuoteReading;
+  window.exposureVixQuote=()=>indexQuoteReading(MarketQuotes.VIX);
   window.exposureRefreshIndexQuote=()=>refreshQuotes(true);
   init();
 })();

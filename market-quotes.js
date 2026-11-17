@@ -1,9 +1,10 @@
 (function(root,factory){const api=factory();if(typeof module==='object'&&module.exports)module.exports=api;else root.MarketQuotes=api;})(globalThis,()=>{
   'use strict';
   const INDEX='IX0001';
+  const VIX='TAIWANVIX';
   const symbol=value=>String(value||'').trim().toUpperCase();
   const symbols=values=>[...new Set(values.map(symbol).filter(s=>/^[A-Z0-9.-]{1,12}$/.test(s)))];
-  const marketPair=benchmark=>symbols([symbol(benchmark)||'0050',INDEX]);
+  const marketSymbols=benchmark=>symbols([symbol(benchmark)||'0050',INDEX,VIX]);
   function privateOrigin(value) {
     try {
       const url = new URL(String(value || '').trim());
@@ -41,5 +42,5 @@
     const p=Number(price),h=Number(high);
     return Number.isFinite(p)&&Number.isFinite(h)&&p>0&&h>0?Math.max(0,(h-p)/p*100):null;
   }
-  return {INDEX,symbol,symbols,marketPair,privateOrigin,timestamp,localBatch,shioajiIndexBar,gainToHigh};
+  return {INDEX,VIX,symbol,symbols,marketSymbols,privateOrigin,timestamp,localBatch,shioajiIndexBar,gainToHigh};
 });

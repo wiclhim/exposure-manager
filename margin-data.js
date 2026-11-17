@@ -13,9 +13,30 @@
     }).sort((a,b)=>a.date.localeCompare(b.date)).map((row,i,rows)=>({...row,change:i?row.balance-rows[i-1].balance:null,ma20:i>=19?rows.slice(i-19,i+1).reduce((sum,r)=>sum+r.balance,0)/20:null}));
   }
   function summary(rows){
-    if(rows.length<2)throw new Error('融資資料不足');
-    const last=rows.at(-1),previous=rows.at(-2),five=rows.length>=6?rows.at(-6):null;
-    return {last,dayChange:last.balance-previous.balance,dayPercent:previous.balance>0?(last.balance/previous.balance-1)*100:null,fiveChange:five?last.balance-five.balance:null,fivePercent:five?.balance>0?(last.balance/five.balance-1)*100:null};
+    const i=rows.findLastIndex(row=>Number.isFinite(row.balance));
+    const last=rows[i],previous=rows[i-1]?.balance;
+    const window=i>=5 ? rows.slice(i-5,i+1) : [];
+    const five=window.length && window.every(row=>Number.isFinite(row.balance)) ? window[0].balance : null;
+    return {last,dayChange:Number.isFinite(previous)?last.balance-previous:null,dayPercent:previous>0?(last.balance/previous-1)*100:null,fiveChange:five!=null?last.balance-five:null,fivePercent:five>0?(last.balance/five-1)*100:null};
+  }
+  function addOtcBalance(listed, otc) {
+    const byDate = new Map(otc.map(row => [row.date, row.marginBalance]));
+    const totals = listed.map(row => {
+      const otcBalance = byDate.get(row.date.replaceAll('-', ''));
+      const available = Number.isFinite(otcBalance) && otcBalance >= 0;
+      return { date: row.date, listedBalance: row.balance, otcBalance: available ? otcBalance : null,
+        balance: available ? row.balance + otcBalance : null };
+    });
+    return totals.map((row, i) => {
+      const previous = totals[i - 1]?.balance;
+      const window = i >= 19 ? totals.slice(i - 19, i + 1) : [];
+      return {
+        ...row,
+        change: row.balance != null && previous != null ? row.balance - previous : null,
+        ma20: window.length && window.every(day => day.balance != null)
+          ? window.reduce((sum, day) => sum + day.balance, 0) / 20 : null
+      };
+    });
   }
   function normalizeMaintenance(body){
     if(body?.stat!=='OK'||!Array.isArray(body.data))throw new Error('證交所暫無維持率資料');
@@ -40,5 +61,5 @@
     if(current.length)groups.push(current);
     return groups;
   }
-  return {normalize,summary,normalizeMaintenance,combine,segments};
+  return {normalize,summary,addOtcBalance,normalizeMaintenance,combine,segments};
 });

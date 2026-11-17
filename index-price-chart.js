@@ -3,12 +3,17 @@ document.querySelector('#page-overview .overview-grid').append(panel);
 const fmt=n=>Number(n).toLocaleString('zh-TW',{minimumFractionDigits:2,maximumFractionDigits:2});
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const latestQuote = last => live?.price > 0 && (!last || !live.date || live.date >= last.date) ? live : null;
+let vixQuote = window.exposureVixQuote?.();
+let vixClose = null;
 function renderSummary(){
  const last=all.at(-1),highRow=all.reduce((best,row)=>!best||row.close>best.close?row:best,null);
  const quote=latestQuote(last);
  const price=quote?.price??last?.close,high=highRow?.close,distance=price>0&&high>0?(price/high-1)*100:null;
  const zone=distance==null?'等待歷史高點':distance>=0?'已達／超過高點':distance<=-20?'股災區間':distance<=-10?'觀察區間':'正常區間';
- document.getElementById('indexPriceSummary').innerHTML=`<div><span>距近一年最高收盤</span><strong>${distance==null?'—':distance.toFixed(2)+'%'}</strong><small>${zone}</small></div><div><span>${quote?'目前指數':'最新收盤指數'}</span><strong>${price?fmt(price):'—'}</strong><small>${quote?esc(quote.time)+' · '+esc(quote.source||'報價'):esc(last?.date||'等待報價')}</small></div><div><span>近一年最高收盤</span><strong>${high?fmt(high):'—'}</strong><small>${esc(highRow?.date||'')}</small></div>`;
+ const liveVix = vixQuote?.price > 0 && (!vixClose || vixQuote.date > vixClose.date);
+ const vixValue = liveVix ? vixQuote.price : vixClose?.close;
+ const vixStatus = liveVix ? vixQuote.time + ' · 永豐' : vixClose ? vixClose.date + ' · 期交所收盤' : '等待行情';
+ document.getElementById('indexPriceSummary').innerHTML=`<div><span>距近一年最高收盤</span><strong>${distance==null?'—':distance.toFixed(2)+'%'}</strong><small>${zone}</small></div><div><span>${quote?'目前指數':'最新收盤指數'}</span><strong>${price?fmt(price):'—'}</strong><small>${quote?esc(quote.time)+' · '+esc(quote.source||'報價'):esc(last?.date||'等待報價')}</small></div><div><span>VIXTWN</span><strong>${vixValue?fmt(vixValue):'—'}</strong><small>${esc(vixStatus)}</small></div><div><span>近一年最高收盤</span><strong>${high?fmt(high):'—'}</strong><small>${esc(highRow?.date||'')}</small></div>`;
 }
 function render(){
  if(all.length<2){renderSummary();return;}
@@ -40,5 +45,7 @@ document.getElementById('indexKdContext').textContent=golden?'KD 低檔黃金交
 panel.addEventListener('click',e=>{const b=e.target.closest('[data-months]');if(b){months=Number(b.dataset.months);render();}});
 window.addEventListener('exposure-index-data',e=>{all=e.detail;render();});
 window.addEventListener('exposure-index-quote',e=>{live=e.detail;render();});
+window.addEventListener('exposure-vix-quote', e=>{ vixQuote=e.detail;renderSummary(); });
+window.addEventListener('exposure-vix-close', e=>{ vixClose=e.detail;renderSummary(); });
 renderSummary();
 })();

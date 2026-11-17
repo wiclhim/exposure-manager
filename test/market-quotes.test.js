@@ -1,7 +1,8 @@
 const assert = require('node:assert/strict');
 const quotes = require('../market-quotes');
 
-assert.deepEqual(quotes.marketPair('006208'), ['006208', 'IX0001']);
+assert.deepEqual(quotes.marketSymbols('006208'), ['006208', 'IX0001', 'TAIWANVIX']);
+assert.deepEqual(quotes.marketSymbols('IX0001'), ['IX0001', 'TAIWANVIX']);
 assert.equal(quotes.privateOrigin('https://home.tailnet.ts.net/'), 'https://home.tailnet.ts.net');
 for (const value of ['http://home.tailnet.ts.net', 'https://home.tailnet.ts.net.example.com', 'https://home.tailnet.ts.net:8765', 'https://user@home.tailnet.ts.net', 'https://home.tailnet.ts.net/quotes']) {
   assert.equal(quotes.privateOrigin(value), null);
@@ -9,7 +10,7 @@ for (const value of ['http://home.tailnet.ts.net', 'https://home.tailnet.ts.net.
 assert.deepEqual(quotes.symbols(['0050', '0050', '', ' ix0001 ', '2330']), ['0050', 'IX0001', '2330']);
 const pair = [{ symbol:'0050', price:98.2, quoteTime:1794192297360 }, { symbol:'IX0001', price:42056.18, quoteTime:1794192300000 }];
 const invalid = [{ symbol:'0050', price:0, quoteTime:1794192297360 }, { symbol:'IX0001', price:42056.18 }, { symbol:'006208', price:184, quoteTime:1794192300000 }];
-assert.deepEqual(quotes.localBatch([...pair, ...invalid], quotes.marketPair('0050')), pair);
+assert.deepEqual(quotes.localBatch([...pair, ...invalid], quotes.marketSymbols('0050')), pair);
 assert.deepEqual(quotes.localBatch(null, []), []);
 assert.equal(quotes.timestamp(1793683800000000), 1793683800000);
 const closeTime = Date.parse('2026-11-12T13:33:00+08:00');
