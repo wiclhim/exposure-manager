@@ -22,7 +22,7 @@ assert.throws(()=>normalize({stat:'OK',data:[body.data[0],body.data[0]]}));
 assert.throws(()=>normalize({stat:'no data',data:body.data}));
 assert.throws(()=>normalize({stat:'OK',data:[]}));
 assert.equal(summary([{balance:0},{balance:1}]).dayPercent,null);
-const dates=Array.from({length:120},(_,i)=>new Date(Date.UTC(2026,5,i+7)).toISOString().slice(0,10).replaceAll('-',''));
+const dates=Array.from({length:120},(_,i)=>new Date(Date.UTC(2027,5,i+7)).toISOString().slice(0,10).replaceAll('-',''));
 const balanceSource=dates.map((date,i)=>({date,marginAmt:600000000+i*100000}));
 const rateSource=dates.slice(-63).map((date,i)=>({date,keepRate:180+i*.1}));
 const otcSource=dates.slice(-39).map((date,i)=>({date,marginBalance:1400+i*2}));
@@ -71,10 +71,36 @@ function response(){return{headers:{},code:200,setHeader(k,v){this.headers[k]=v;
     const c=response();await partial({method:'GET'},c);assert.equal(c.code,200);assert.equal(c.body.data.length,110);assert(c.body.maintenance.error);assert(c.body.data.every(r=>r.keepRate===null));assert(c.headers['Cache-Control'].includes('s-maxage=300'));
     const backfill=handler();global.fetch=async url=>{if(url.includes('MI_MARGN_TREND')&&new URL(url).searchParams.has('date'))throw Error('older history unavailable');return good(url);};
     const d=response();await backfill({method:'GET'},d);assert.equal(d.code,200);assert.equal(d.body.data.length,60);assert.equal(d.body.historyIncomplete,true);assert(d.headers['Cache-Control'].includes('s-maxage=300'));
-    const noOtc=handler();global.fetch=async url=>{if(new URL(url).hostname==='www.tpex.org.tw')throw Error('OTC offline');return good(url);};
+    const noOtc=handler();global.fetch=async url=>{if(new URL(url).hostname.endsWith('.tpex.org.tw'))throw Error('OTC offline');return good(url);};
     const e=response();await noOtc({method:'GET'},e);assert.equal(e.code,200);assert.equal(e.body.otcError,true);
     assert(e.body.data.every(row=>row.balance===null),'listed-only values must never appear as combined');
     assert.equal(e.body.maintenance.latest.keepRate,186.2);
+    const fallback=handler();
+    global.fetch=async url=>{
+      const host=new URL(url).hostname;
+      if(host==='www.tpex.org.tw')throw Error('OTC trend offline');
+      if(host==='info.tpex.org.tw')return {ok:true,json:async()=>({marginPurchaseValue:[
+        {date:'10/4',count:'147600000'}
+      ]})};
+      return good(url);
+    };
+    const f=response();await fallback({method:'GET'},f);
+    assert.equal(f.body.data.at(-1).otcBalance,1476,'market board amount converts from thousands to hundred-million TWD');
+    const daily=handler();
+    global.fetch=async url=>{
+      const {hostname,pathname,searchParams}=new URL(url);
+      if(pathname.endsWith('/margin/balance')){
+        assert.equal(searchParams.get('date'),'2027/10/04');
+        return {ok:true,json:async()=>({date:'20271004',stat:'ok',tables:[{summary:[
+          ['', '融資金(仟元)', '147,600,000', '', '', '', '147,900,231'],
+        ]}]})};
+      }
+      if(hostname.endsWith('.tpex.org.tw'))throw Error('OTC dashboard offline');
+      return good(url);
+    };
+    const g=response();await daily({method:'GET'},g);
+    assert.equal(g.body.otcError,false);
+    assert.equal(g.body.data.at(-1).otcBalance,1479.00231,'daily report uses current balance in thousands');
   }finally{global.fetch=original;}
   console.log('PASS: margin/ratio units, date alignment, genuine 90-session history, warm-up, missing-data gaps, pagination, concurrent caching and partial outages');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -1,15 +1,45 @@
 const {normalize,normalizeMaintenance,combine,addOtcBalance}=require('../margin-data');
+const otcHistory=require('../data/otc-margin-20261117.json');
 let cached=null,pending=null;
 const HISTORY_ROWS=110; // 90 visible sessions plus the 20-session moving average warm-up.
 const OTC_TREND='https://www.tpex.org.tw/www/zh-tw/dashboardOtc/marginTrend?lang=zh-tw&days=240';
+const OTC_OVERVIEW='https://info.tpex.org.tw/api/mktInfo';
 async function loadOtcTrend() {
   const response=await fetch(OTC_TREND,{signal:AbortSignal.timeout(5000)});
   if(!response.ok)throw new Error('櫃買中心暫無融資資料');
   const body=await response.json();
-  if(body.stat!=='ok'||!Array.isArray(body.trend)||!body.trend.some(row=>Number.isFinite(row?.marginBalance))) {
+  if(body.stat!=='ok'||!Array.isArray(body.trend)) {
     throw new Error('櫃買中心暫無融資資料');
   }
-  return body.trend;
+  return body.trend.filter(row=>/^\d{8}$/.test(row?.date)&&Number.isFinite(row.marginBalance)&&row.marginBalance>=0);
+}
+async function loadOtcOverview(listed) {
+  const response=await fetch(OTC_OVERVIEW,{signal:AbortSignal.timeout(4000)});
+  if(!response.ok)throw new Error('櫃買中心市場看板暫無資料');
+  const body=await response.json();
+  if(!Array.isArray(body.marginPurchaseValue))throw new Error('櫃買中心市場看板格式異常');
+  // The board supplies 30 trading days using month/day. Match against the same recent trading dates across New Year.
+  const recentDates=new Map(listed.slice(-45).map(({date})=>{
+    const [,month,day]=date.split('-');
+    return [Number(month)+'/'+Number(day),date.replaceAll('-','')];
+  }));
+  return body.marginPurchaseValue.flatMap(({date,count})=>{
+    const day=recentDates.get(date);
+    const amount=String(count).replaceAll(',','');
+    return day&&/^\d+$/.test(amount)?[{date:day,marginBalance:Number(amount)/100000}]:[];
+  });
+}
+async function loadOtcDaily(date) {
+  const day=date.replace(/^(....)(..)(..)$/, '$1/$2/$3');
+  const url=new URL('https://www.tpex.org.tw/www/zh-tw/margin/balance');
+  url.search=new URLSearchParams({response:'json',date:day});
+  const response=await fetch(url.toString(),{signal:AbortSignal.timeout(4000)});
+  if(!response.ok)throw new Error('櫃買中心日報暫無資料');
+  const body=await response.json();
+  if(body.stat!=='ok'||body.date!==date)return [];
+  const total=body.tables.flatMap(table=>table.summary||[]).find(row=>row[1]==='融資金(仟元)');
+  const amount=String(total?.[6]).replaceAll(',','');
+  return /^\d+$/.test(amount)?[{date,marginBalance:Number(amount)/100000}]:[];
 }
 async function fetchTrend(name,date){
   const params=new URLSearchParams({response:'json',days:'60'});if(date)params.set('date',date);
@@ -44,11 +74,18 @@ module.exports=async function(req,res){
         const [balanceResult,maintenanceResult,otcResult]=await Promise.allSettled([loadTrend('MI_MARGN_TREND'),loadTrend('BFIJ3U_TREND'),loadOtcTrend()]);
         if(balanceResult.status!=='fulfilled')throw balanceResult.reason;
         const listed=normalize(balanceResult.value.body);
-        const balance=addOtcBalance(listed,otcResult.status==='fulfilled'?otcResult.value:[]);
+        const recentOtc=otcResult.status==='fulfilled'?otcResult.value:[];
+        const lastListedDate=listed.at(-1).date.replaceAll('-','');
+        let fallbackOtc=[];
+        if(!recentOtc.some(row=>row.date===lastListedDate)){
+          const alternatives=await Promise.allSettled([loadOtcOverview(listed),loadOtcDaily(lastListedDate)]);
+          fallbackOtc=alternatives.flatMap(result=>result.status==='fulfilled'?result.value:[]);
+        }
+        const balance=addOtcBalance(listed,[...otcHistory,...recentOtc,...fallbackOtc]);
         let rates=[],maintenanceError=null;
         try{if(maintenanceResult.status!=='fulfilled')throw maintenanceResult.reason;rates=normalizeMaintenance(maintenanceResult.value.body);}catch{maintenanceError='維持率暫時無法取得';}
         const maintenance={name:'全市場整戶擔保維持率',scope:'上市＋上櫃，融資＋融券合併',unit:'%',availableFrom:'2026-08-03',latest:rates.filter(r=>Number.isFinite(r.keepRate)).at(-1)||null,error:maintenanceError,historyIncomplete:maintenanceResult.status==='fulfilled'&&maintenanceResult.value.historyIncomplete};
-        const otcError=otcResult.status!=='fulfilled';
+        const otcError=![...recentOtc,...fallbackOtc].some(row=>row.date===lastListedDate);
         const payload={version:3,source:'臺灣證券交易所、證券櫃檯買賣中心',scope:'上市＋上櫃融資餘額',unit:'億元',fetchedAt:new Date().toISOString(),historyIncomplete:balanceResult.value.historyIncomplete,otcError,maintenance,data:combine(balance,rates)};
         const ttl=maintenanceError||otcError||balance.at(-1).balance==null||payload.historyIncomplete||maintenance.historyIncomplete?300:3600;
         cached={at:Date.now(),payload,ttl};
