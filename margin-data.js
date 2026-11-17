@@ -14,10 +14,19 @@
   }
   function summary(rows){
     const i=rows.findLastIndex(row=>Number.isFinite(row.balance));
-    const last=rows[i],previous=rows[i-1]?.balance;
+    const last=rows[i],previous=rows[i-1];
+    const change=key=>Number.isFinite(last?.[key])&&Number.isFinite(previous?.[key])?last[key]-previous[key]:null;
     const window=i>=5 ? rows.slice(i-5,i+1) : [];
     const five=window.length && window.every(row=>Number.isFinite(row.balance)) ? window[0].balance : null;
-    return {last,dayChange:Number.isFinite(previous)?last.balance-previous:null,dayPercent:previous>0?(last.balance/previous-1)*100:null,fiveChange:five!=null?last.balance-five:null,fivePercent:five>0?(last.balance/five-1)*100:null};
+    return {
+      last,
+      dayChange:change('balance'),
+      listedDayChange:change('listedBalance'),
+      otcDayChange:change('otcBalance'),
+      dayPercent:previous?.balance>0?(last.balance/previous.balance-1)*100:null,
+      fiveChange:five!=null?last.balance-five:null,
+      fivePercent:five>0?(last.balance/five-1)*100:null
+    };
   }
   function addOtcBalance(listed, otc) {
     const byDate = new Map(otc.map(row => [row.date, row.marginBalance]));
