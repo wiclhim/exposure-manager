@@ -4,6 +4,68 @@
   panel.innerHTML='<div class="panel-top"><div><div class="section-label">TAIEX · MARGIN BALANCE</div><h2>上市融資水位</h2></div><button type="button" class="secondary-button small" id="marginRefresh">更新融資</button></div><p id="marginStatus" role="status">正在取得證交所盤後資料…</p><div id="marginContent"></div><p class="margin-note">餘額為上市融資金額，不含上櫃；維持率為全市場整戶擔保維持率，涵蓋上市＋上櫃及融資＋融券，不代表個別帳戶。兩者均為盤後資料，可能分開公布或更正。</p><small>資料來源：<a href="https://www.twse.com.tw/zh/trading/margin/mi-margn.html" target="_blank" rel="noopener noreferrer">證交所信用交易統計</a>、<a href="https://www.twse.com.tw/dashboard/zh/credit/margin.html" target="_blank" rel="noopener noreferrer">臺股儀表板</a> · 僅供觀察，不更動 Beta 規則。</small>';
   document.querySelector('.index-price-panel').insertAdjacentElement('afterend',panel);
   const $=id=>document.getElementById(id),fmt=n=>n==null?'—':Number(n).toLocaleString('zh-TW',{minimumFractionDigits:2,maximumFractionDigits:2}),signed=n=>n==null?'—':`${n>0?'+':''}${fmt(n)}`,color=n=>n>0?'#b27865':n<0?'#638977':'#7c8875';
+  const vix = document.createElement('section');
+  vix.className = 'margin-vix';
+  vix.setAttribute('aria-labelledby', 'vixHeading');
+  vix.innerHTML = '<h3 id="vixHeading">臺指選擇權波動率指數（VIXTWN）</h3><p id="vixReading" class="margin-note" role="status">正在取得期交所收盤資料…</p><div id="vixChart" class="margin-chart"></div><small><a href="https://www.taifex.com.tw/indes/index.aspx" target="_blank" rel="noopener noreferrer">臺灣期貨交易所</a> · 日收盤值（點）</small>';
+  $('marginRefresh').textContent = '更新資料';
+  $('marginContent').insertAdjacentElement('afterend', vix);
+  let vixData = [];
+  let vixRows = [];
+  let vixFailed = false;
+
+  function inspectVix(index) {
+    const row = vixRows[index];
+    if (row) $('vixReading').textContent = `${row.date} 收盤 ${fmt(row.close)} 點 · 顯示 ${vixRows.length} 個交易日${vixFailed ? ' · 更新失敗，保留上次資料' : ''}`;
+  }
+
+  function renderVix() {
+    vixRows = vixData.slice(-range);
+    if (!vixRows.length) {
+      $('vixChart').replaceChildren();
+      if (vixFailed) $('vixReading').textContent = '期交所資料暫時無法取得，可按「更新資料」重試。';
+      return;
+    }
+    const chartWidth = mobile ? 480 : 900;
+    const left = mobile ? 90 : 72;
+    const right = mobile ? 460 : 818;
+    const values = vixRows.map(row => row.close);
+    const low = Math.min(...values);
+    const high = Math.max(...values);
+    const padding = Math.max(1, (high - low) * .12);
+    const bottom = Math.max(0, low - padding);
+    const top = high + padding;
+    const step = (right - left) / Math.max(1, vixRows.length - 1);
+    const x = index => left + index * step;
+    const y = value => 18 + (top - value) / (top - bottom) * 126;
+    const grid = [bottom, (top + bottom) / 2, top].map(value =>
+      `<line x1="${left}" x2="${right}" y1="${y(value)}" y2="${y(value)}" stroke="#e4e7df"/><text x="${left - 8}" y="${y(value) + 4}" text-anchor="end">${fmt(value)}</text>`).join('');
+    const points = vixRows.map((row, i) => `${x(i)},${y(row.close)}`).join(' ');
+    const lastIndex = vixRows.length - 1;
+    const labels = [...new Set([0, Math.round(lastIndex / 3), Math.round(lastIndex * 2 / 3), lastIndex])].map(i =>
+      `<text x="${x(i)}" y="169" text-anchor="middle">${vixRows[i].date.slice(5).replace('-', '/')}</text>`).join('');
+    const hitArea = vixRows.map((row, i) =>
+      `<rect data-vix-point="${i}" x="${x(i) - step / 2}" y="8" width="${step}" height="146" fill="transparent"><title>${row.date} · ${fmt(row.close)} 點</title></rect>`).join('');
+    $('vixChart').innerHTML = `<svg viewBox="0 0 ${chartWidth} 176" role="img" aria-label="VIXTWN 每日收盤走勢">${grid}<polyline points="${points}" fill="none" stroke="#346f91" stroke-width="2.8" stroke-linejoin="round"/><circle cx="${x(lastIndex)}" cy="${y(vixRows[lastIndex].close)}" r="3.5" fill="#346f91"/>${labels}${hitArea}</svg>`;
+    inspectVix(lastIndex);
+  }
+
+  async function refreshVix() {
+    try {
+      const response = await fetch('/api/vix');
+      if (!response.ok) throw new Error('VIXTWN unavailable');
+      const { data } = await response.json();
+      if (!Array.isArray(data) || !data.length || !data.every(row =>
+        /^\d{4}-\d{2}-\d{2}$/.test(row?.date) && Number.isFinite(row.close) && row.close > 0)) {
+        throw new Error('Invalid VIXTWN data');
+      }
+      vixData = data;
+      vixFailed = false;
+    } catch {
+      vixFailed = true;
+    }
+    renderVix();
+  }
   function inspect(i){const row=payload.data.slice(-range)[i];if(row)$('marginInspect').textContent=`${row.date}｜融資 ${fmt(row.balance)} 億元｜日增減 ${signed(row.change)} 億元｜20 日均線 ${fmt(row.ma20)} 億元｜整戶維持率 ${row.keepRate==null?'未提供':fmt(row.keepRate)+'%'}`;}
   function render(){
     if(!payload)return;
@@ -39,7 +101,6 @@
     inspect(rows.length-1);
   }
   async function refresh(force=false){
-    $('marginRefresh').disabled=true;
     try{
       if(!force){try{const c=JSON.parse(sessionStorage.getItem('exposureMarginCache.v2')||'null');if(c&&c.payload?.version===2&&Date.now()-c.at<(c.payload.maintenance?.error||c.payload.historyIncomplete||c.payload.maintenance?.historyIncomplete?300000:3600000)&&c.payload.data?.length>=2){payload=c.payload;render();return;}}catch{}}
       const response=await fetch('/api/margin?v=2'),data=await response.json();
@@ -47,11 +108,24 @@
       payload=data;render();try{sessionStorage.setItem('exposureMarginCache.v2',JSON.stringify({at:Date.now(),payload}));}catch{}
     }catch{
       if(payload){render();$('marginStatus').textContent+=' · 本次更新失敗，保留上次資料';}
-      else{$('marginStatus').textContent='融資資料暫時無法取得，請稍後按「更新融資」重試。';$('marginContent').textContent='';}
-    }finally{$('marginRefresh').disabled=false;}
+      else{$('marginStatus').textContent='融資資料暫時無法取得，請稍後按「更新資料」重試。';$('marginContent').textContent='';}
+    }
   }
-  panel.addEventListener('click',e=>{const button=e.target.closest('[data-margin-days]');if(button){range=Number(button.dataset.marginDays);render();}const point=e.target.closest('[data-margin-point]');if(point)inspect(Number(point.dataset.marginPoint));});
+  async function refreshCharts(force = false) {
+    const button = $('marginRefresh');
+    button.disabled = true;
+    try { await Promise.all([refresh(force), refreshVix()]); }
+    finally { button.disabled = false; }
+  }
+  panel.addEventListener('click',e=>{const button=e.target.closest('[data-margin-days]');if(button){range=Number(button.dataset.marginDays);render();renderVix();}const point=e.target.closest('[data-margin-point]');if(point)inspect(Number(point.dataset.marginPoint));});
   panel.addEventListener('pointermove',e=>{const point=e.target.closest('[data-margin-point]');if(point)inspect(Number(point.dataset.marginPoint));});
-  $('marginRefresh').addEventListener('click',()=>refresh(true));
-  window.matchMedia('(max-width:640px)').addEventListener('change',e=>{mobile=e.matches;render();});refresh();
+  function selectVixPoint(event) {
+    const point = event.target.closest('[data-vix-point]');
+    if (point) inspectVix(Number(point.dataset.vixPoint));
+  }
+  vix.addEventListener('click', selectVixPoint);
+  vix.addEventListener('pointermove', selectVixPoint);
+  $('marginRefresh').addEventListener('click',()=>refreshCharts(true));
+  window.matchMedia('(max-width:640px)').addEventListener('change',e=>{mobile=e.matches;render();renderVix();});
+  refreshCharts();
 })();
