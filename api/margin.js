@@ -1,4 +1,6 @@
-const {normalize,normalizeMaintenance,combine,addOtcBalance}=require('../margin-data');
+const {normalize,addOtcBalance}=require('../margin-data');
+const {load:loadFinancingDay}=require('../financing-maintenance');
+const financingHistory=require('../data/financing-maintenance-20261118.json');
 const otcHistory=require('../data/otc-margin-20261117.json');
 let cached=null,pending=null;
 const HISTORY_ROWS=110; // 90 visible sessions plus the 20-session moving average warm-up.
@@ -56,7 +58,6 @@ async function loadTrend(name){
   if(data.length>=60){
     const first=data.map(row=>String(row.date)).sort()[0];
     if(!/^\d{8}$/.test(first))throw Error('Invalid trend date');
-    if(name==='BFIJ3U_TREND'&&first<='20260803')return {body:latest,historyIncomplete:false};
     const day=new Date(`${first.slice(0,4)}-${first.slice(4,6)}-${first.slice(6,8)}T00:00:00Z`);day.setUTCDate(day.getUTCDate()-1);
     try{
       const older=await fetchTrend(name,day.toISOString().slice(0,10).replaceAll('-',''));
@@ -66,14 +67,27 @@ async function loadTrend(name){
   }
   return {body:{...latest,data},historyIncomplete};
 }
+async function loadFinancingMaintenance(listed){
+  const stored=new Map(financingHistory.map(row=>[row.date,row]));
+  const missing=listed.filter(row=>!stored.has(row.date)).slice(-3);
+  const results=await Promise.allSettled(missing.map(row=>loadFinancingDay(row.date)));
+  for(const result of results){
+    if(result.status==='fulfilled')stored.set(result.value.date,result.value);
+  }
+  return {
+    data:stored,
+    error:results.some(result=>result.status==='rejected')?'部分融資維持率日線暫時無法取得':null
+  };
+}
 module.exports=async function(req,res){
   if(req.method!=='GET'){res.setHeader('Allow','GET');return res.status(405).json({error:'Method not allowed'});}
   try{
     if(!cached||Date.now()-cached.at>=cached.ttl*1000){
       if(!pending)pending=(async()=>{
-        const [balanceResult,maintenanceResult,otcResult]=await Promise.allSettled([loadTrend('MI_MARGN_TREND'),loadTrend('BFIJ3U_TREND'),loadOtcTrend()]);
+        const [balanceResult,otcResult]=await Promise.allSettled([loadTrend('MI_MARGN_TREND'),loadOtcTrend()]);
         if(balanceResult.status!=='fulfilled')throw balanceResult.reason;
         const listed=normalize(balanceResult.value.body);
+        const financingRequest=loadFinancingMaintenance(listed);
         const recentOtc=otcResult.status==='fulfilled'?otcResult.value:[];
         const lastListedDate=listed.at(-1).date.replaceAll('-','');
         let fallbackOtc=[];
@@ -82,12 +96,13 @@ module.exports=async function(req,res){
           fallbackOtc=alternatives.flatMap(result=>result.status==='fulfilled'?result.value:[]);
         }
         const balance=addOtcBalance(listed,[...otcHistory,...recentOtc,...fallbackOtc]);
-        let rates=[],maintenanceError=null;
-        try{if(maintenanceResult.status!=='fulfilled')throw maintenanceResult.reason;rates=normalizeMaintenance(maintenanceResult.value.body);}catch{maintenanceError='維持率暫時無法取得';}
-        const maintenance={name:'全市場整戶擔保維持率',scope:'上市＋上櫃，融資＋融券合併',unit:'%',availableFrom:'2026-08-03',latest:rates.filter(r=>Number.isFinite(r.keepRate)).at(-1)||null,error:maintenanceError,historyIncomplete:maintenanceResult.status==='fulfilled'&&maintenanceResult.value.historyIncomplete};
+        const financing=await financingRequest;
+        const data=balance.map(row=>({...row,financingRate:financing.data.get(row.date)?.financingRate??null,unpriced:financing.data.get(row.date)?.unpriced??null}));
+        const latest=data.findLast(row=>Number.isFinite(row.financingRate))||null;
+        const maintenance={name:'台灣－上市櫃融資維持率（自算）',scope:'上市＋上櫃融資股票，含 ETF',unit:'%',source:'證交所、櫃買中心公開日報計算',latest,error:financing.error};
         const otcError=![...recentOtc,...fallbackOtc].some(row=>row.date===lastListedDate);
-        const payload={version:3,source:'臺灣證券交易所、證券櫃檯買賣中心',scope:'上市＋上櫃融資餘額',unit:'億元',fetchedAt:new Date().toISOString(),historyIncomplete:balanceResult.value.historyIncomplete,otcError,maintenance,data:combine(balance,rates)};
-        const ttl=maintenanceError||otcError||balance.at(-1).balance==null||payload.historyIncomplete||maintenance.historyIncomplete?300:3600;
+        const payload={version:4,source:'臺灣證券交易所、證券櫃檯買賣中心',scope:'上市＋上櫃融資餘額',unit:'億元',fetchedAt:new Date().toISOString(),historyIncomplete:balanceResult.value.historyIncomplete,otcError,maintenance,data};
+        const ttl=financing.error||!latest||latest.date!==listed.at(-1).date||otcError||balance.at(-1).balance==null||payload.historyIncomplete?300:3600;
         cached={at:Date.now(),payload,ttl};
       })().finally(()=>{pending=null;});
       await pending;

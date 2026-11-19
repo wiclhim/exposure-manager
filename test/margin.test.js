@@ -1,5 +1,20 @@
 const assert=require('node:assert/strict');
-const {normalize,summary,addOtcBalance,normalizeMaintenance,combine,segments}=require('../margin-data');
+const {normalize,summary,addOtcBalance,normalizeMaintenance,combine,segments,mergeHistory}=require('../margin-data');
+const financingSource=require('../financing-maintenance');
+const fixture=(fields,data,summary)=>({date:'20261118',stat:'ok',tables:[{fields,data,summary}]});
+const listedMargin=fixture(['代號','','','','','','今日餘額'],[['0050','','','','','',20]]);
+listedMargin.tables.push({data:[['融資金額(仟元)','','','','',300]]});
+const listedQuotes=fixture(['證券代號','','','','','','','','收盤價'],[['0050','','','','','','','',30]]);
+const otcMargin=fixture(['代號','','','','','','資餘額'],[['6488','','','','','',10]],[['','融資金(仟元)','','','','',100]]);
+const otcQuotes=fixture(['代號','','收盤'],[['6488','',12]]);
+assert.equal(financingSource.calculate('2026-11-18',listedMargin,listedQuotes,otcMargin,otcQuotes).financingRate,180,'weight by financing amounts across both markets');
+assert.throws(()=>financingSource.calculate('2026-11-17',listedMargin,listedQuotes,otcMargin,otcQuotes));
+const migrated=mergeHistory([{date:'2026-11-18',listedBalance:5,otcBalance:1,keepRate:190}]);
+assert.equal(migrated[0].financingRate,null,'whole-account rates must not become financing-only rates');
+const updated=mergeHistory(migrated,[{date:'2026-11-18',financingRate:154.41,unpriced:13}]);
+assert.equal(updated[0].keepRate,190);
+assert.equal(updated[0].financingRate,154.41);
+assert.equal(mergeHistory(updated,[{date:'2026-11-18',financingRate:null}])[0].financingRate,154.41,'temporary missing rates preserve saved history');
 const body={stat:'OK',data:Array.from({length:25},(_,i)=>({date:new Date(Date.UTC(2026,9,i+1)).toISOString().slice(0,10).replaceAll('-',''),marginAmt:600000000+i*100000}))};
 const rows=normalize({...body,data:[...body.data].reverse()});
 assert.equal(rows[0].balance,6000,'thousands to hundred-million TWD');
@@ -24,7 +39,6 @@ assert.throws(()=>normalize({stat:'OK',data:[]}));
 assert.equal(summary([{balance:0},{balance:1}]).dayPercent,null);
 const dates=Array.from({length:120},(_,i)=>new Date(Date.UTC(2027,5,i+7)).toISOString().slice(0,10).replaceAll('-',''));
 const balanceSource=dates.map((date,i)=>({date,marginAmt:600000000+i*100000}));
-const rateSource=dates.slice(-63).map((date,i)=>({date,keepRate:180+i*.1}));
 const otcSource=dates.slice(-39).map((date,i)=>({date,marginBalance:1400+i*2}));
 const combinedBalance=addOtcBalance(normalize({stat:'OK',data:balanceSource.slice(-110)}),otcSource);
 assert.equal(combinedBalance.at(-1).balance, 6119+1476);
@@ -44,11 +58,13 @@ assert.equal(hole[2].keepRate,189,'rates align by date, never by array offset');
 function handler(){delete require.cache[require.resolve('../api/margin')];return require('../api/margin');}
 function response(){return{headers:{},code:200,setHeader(k,v){this.headers[k]=v;},status(n){this.code=n;return this;},json(v){this.body=v;return this;}};}
 (async()=>{
-  const original=global.fetch;let count=0;
+  const original=global.fetch,originalLoad=financingSource.load;let count=0;
+  const financingLoad=async date=>({date,financingRate:186+dates.slice(-3).indexOf(date.replaceAll('-',''))/10,unpriced:0});
+  financingSource.load=financingLoad;
   const good=async url=>{
     count++;const u=new URL(url);
     if(u.hostname==='www.tpex.org.tw')return {ok:true,json:async()=>({stat:'ok',trend:otcSource})};
-    const rate=u.pathname.endsWith('BFIJ3U_TREND'),source=rate?rateSource:balanceSource,date=u.searchParams.get('date');
+    const source=balanceSource,date=u.searchParams.get('date');
     assert.equal(u.searchParams.get('days'),'60');assert.equal(u.hostname,'www.twse.com.tw');
     if(date)assert.equal(date,new Date(Date.parse(dates.at(-60).replace(/(\d{4})(\d{2})(\d{2})/,'$1-$2-$3')+'T00:00:00Z')-86400000).toISOString().slice(0,10).replaceAll('-',''));
     return {ok:true,json:async()=>({stat:'OK',data:(date?source.filter(r=>r.date<=date):source).slice(-60)})};
@@ -59,22 +75,24 @@ function response(){return{headers:{},code:200,setHeader(k,v){this.headers[k]=v;
     const bad=response();await main({method:'GET'},bad);assert.equal(bad.code,502);assert.equal(bad.headers['Cache-Control'],'no-store');assert.equal(bad.body.data,undefined);
     const before=count;global.fetch=good;
     const a=response(),b=response();await Promise.all([main({method:'GET'},a),main({method:'GET'},b)]);
-    assert.equal(count-before,5,'source requests shared by concurrent API requests');
+    assert.equal(count-before,3,'source requests shared by concurrent API requests');
     assert.equal(a.code,200);assert.equal(a.body.data.length,110,'90 visible rows plus moving-average warm-up');
     assert.equal(a.body.data.slice(-90).length,90);assert.equal(a.body.data.at(-1).ma20!=null,true);
-    assert.deepEqual(a.body.data,combine(combinedBalance,normalizeMaintenance({stat:'OK',data:rateSource})));
+    assert.deepEqual(a.body.data.map(({financingRate,unpriced,...row})=>row),combinedBalance);
     assert.equal(a.body.data.filter(r=>r.balance!=null).length,39,'leave missing OTC dates empty');
-    assert.equal(a.body.data.filter(r=>r.keepRate!=null).length,63,'do not fabricate 90 days of ratio history');
-    assert.equal(a.body.maintenance.latest.keepRate,186.2);assert.equal(a.body.unit,'億元');assert.equal(a.body.version,3);assert.deepEqual(a.body,b.body);
+    assert.equal(a.body.data.filter(r=>r.financingRate!=null).length,3,'keep missing financing history empty');
+    assert.equal(a.body.maintenance.latest.financingRate,186.2);assert.equal(a.body.unit,'億元');assert.equal(a.body.version,4);assert.deepEqual(a.body,b.body);
     const cachedCount=count;await main({method:'GET'},response());assert.equal(count,cachedCount,'hourly cache avoids extra upstream requests');
-    const partial=handler();global.fetch=async url=>{if(new URL(url).pathname.endsWith('BFIJ3U_TREND'))throw Error('temporary outage');return good(url);};
-    const c=response();await partial({method:'GET'},c);assert.equal(c.code,200);assert.equal(c.body.data.length,110);assert(c.body.maintenance.error);assert(c.body.data.every(r=>r.keepRate===null));assert(c.headers['Cache-Control'].includes('s-maxage=300'));
+    financingSource.load=async()=>{throw Error('temporary outage');};
+    const partial=handler();global.fetch=good;
+    const c=response();await partial({method:'GET'},c);assert.equal(c.code,200);assert.equal(c.body.data.length,110);assert(c.body.maintenance.error);assert(c.body.data.every(r=>r.financingRate===null));assert(c.headers['Cache-Control'].includes('s-maxage=300'));
+    financingSource.load=financingLoad;
     const backfill=handler();global.fetch=async url=>{if(url.includes('MI_MARGN_TREND')&&new URL(url).searchParams.has('date'))throw Error('older history unavailable');return good(url);};
     const d=response();await backfill({method:'GET'},d);assert.equal(d.code,200);assert.equal(d.body.data.length,60);assert.equal(d.body.historyIncomplete,true);assert(d.headers['Cache-Control'].includes('s-maxage=300'));
     const noOtc=handler();global.fetch=async url=>{if(new URL(url).hostname.endsWith('.tpex.org.tw'))throw Error('OTC offline');return good(url);};
     const e=response();await noOtc({method:'GET'},e);assert.equal(e.code,200);assert.equal(e.body.otcError,true);
     assert(e.body.data.every(row=>row.balance===null),'listed-only values must never appear as combined');
-    assert.equal(e.body.maintenance.latest.keepRate,186.2);
+    assert.equal(e.body.maintenance.latest.financingRate,186.2);
     const fallback=handler();
     global.fetch=async url=>{
       const host=new URL(url).hostname;
@@ -101,6 +119,6 @@ function response(){return{headers:{},code:200,setHeader(k,v){this.headers[k]=v;
     const g=response();await daily({method:'GET'},g);
     assert.equal(g.body.otcError,false);
     assert.equal(g.body.data.at(-1).otcBalance,1479.00231,'daily report uses current balance in thousands');
-  }finally{global.fetch=original;}
+  }finally{global.fetch=original;financingSource.load=originalLoad;}
   console.log('PASS: margin/ratio units, date alignment, genuine 90-session history, warm-up, missing-data gaps, pagination, concurrent caching and partial outages');
 })().catch(error=>{console.error(error);process.exitCode=1;});
