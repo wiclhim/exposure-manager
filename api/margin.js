@@ -1,5 +1,5 @@
 const {normalize,addOtcBalance}=require('../margin-data');
-const {load:loadFinancingDay}=require('../financing-maintenance');
+const {load:loadFinancingHistory}=require('../financing-maintenance');
 const financingHistory=require('../data/financing-maintenance-20261118.json');
 const otcHistory=require('../data/otc-margin-20261117.json');
 let cached=null,pending=null;
@@ -67,27 +67,24 @@ async function loadTrend(name){
   }
   return {body:{...latest,data},historyIncomplete};
 }
-async function loadFinancingMaintenance(listed){
+async function loadFinancingMaintenance(){
   const stored=new Map(financingHistory.map(row=>[row.date,row]));
-  const missing=listed.filter(row=>!stored.has(row.date)).slice(-3);
-  const results=await Promise.allSettled(missing.map(row=>loadFinancingDay(row.date)));
-  for(const result of results){
-    if(result.status==='fulfilled')stored.set(result.value.date,result.value);
+  try {
+    const rows=await loadFinancingHistory();
+    for(const row of rows)stored.set(row.date,row);
+    return {data:stored,error:null};
+  } catch {
+    return {data:stored,error:'FinLab 暫時無法更新，顯示已儲存的融資維持率'};
   }
-  return {
-    data:stored,
-    error:results.some(result=>result.status==='rejected')?'部分融資維持率日線暫時無法取得':null
-  };
 }
 module.exports=async function(req,res){
   if(req.method!=='GET'){res.setHeader('Allow','GET');return res.status(405).json({error:'Method not allowed'});}
   try{
     if(!cached||Date.now()-cached.at>=cached.ttl*1000){
       if(!pending)pending=(async()=>{
-        const [balanceResult,otcResult]=await Promise.allSettled([loadTrend('MI_MARGN_TREND'),loadOtcTrend()]);
+        const [balanceResult,otcResult,financingResult]=await Promise.allSettled([loadTrend('MI_MARGN_TREND'),loadOtcTrend(),loadFinancingMaintenance()]);
         if(balanceResult.status!=='fulfilled')throw balanceResult.reason;
         const listed=normalize(balanceResult.value.body);
-        const financingRequest=loadFinancingMaintenance(listed);
         const recentOtc=otcResult.status==='fulfilled'?otcResult.value:[];
         const lastListedDate=listed.at(-1).date.replaceAll('-','');
         let fallbackOtc=[];
@@ -96,12 +93,13 @@ module.exports=async function(req,res){
           fallbackOtc=alternatives.flatMap(result=>result.status==='fulfilled'?result.value:[]);
         }
         const balance=addOtcBalance(listed,[...otcHistory,...recentOtc,...fallbackOtc]);
-        const financing=await financingRequest;
-        const data=balance.map(row=>({...row,financingRate:financing.data.get(row.date)?.financingRate??null,unpriced:financing.data.get(row.date)?.unpriced??null}));
+        if(financingResult.status!=='fulfilled')throw financingResult.reason;
+        const financing=financingResult.value;
+        const data=balance.map(row=>({...row,financingRate:financing.data.get(row.date)?.financingRate??null,financingSource:'FinLab'}));
         const latest=data.findLast(row=>Number.isFinite(row.financingRate))||null;
-        const maintenance={name:'台灣－上市櫃融資維持率（自算）',scope:'上市＋上櫃融資股票，含 ETF',unit:'%',source:'證交所、櫃買中心公開日報計算',latest,error:financing.error};
+        const maintenance={name:'台灣－上市櫃融資維持率（FinLab 估算）',scope:'上市＋上櫃融資股票',unit:'%',source:'FinLab',url:'https://finlab.finance/tools/margin-maintenance-ratio',latest,error:financing.error};
         const otcError=![...recentOtc,...fallbackOtc].some(row=>row.date===lastListedDate);
-        const payload={version:4,source:'臺灣證券交易所、證券櫃檯買賣中心',scope:'上市＋上櫃融資餘額',unit:'億元',fetchedAt:new Date().toISOString(),historyIncomplete:balanceResult.value.historyIncomplete,otcError,maintenance,data};
+        const payload={version:5,source:'臺灣證券交易所、證券櫃檯買賣中心',scope:'上市＋上櫃融資餘額',unit:'億元',fetchedAt:new Date().toISOString(),historyIncomplete:balanceResult.value.historyIncomplete,otcError,maintenance,data};
         const ttl=financing.error||!latest||latest.date!==listed.at(-1).date||otcError||balance.at(-1).balance==null||payload.historyIncomplete?300:3600;
         cached={at:Date.now(),payload,ttl};
       })().finally(()=>{pending=null;});

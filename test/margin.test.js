@@ -1,20 +1,27 @@
 const assert=require('node:assert/strict');
 const {normalize,summary,addOtcBalance,normalizeMaintenance,combine,segments,mergeHistory}=require('../margin-data');
 const financingSource=require('../financing-maintenance');
-const fixture=(fields,data,summary)=>({date:'20261118',stat:'ok',tables:[{fields,data,summary}]});
-const listedMargin=fixture(['代號','','','','','','今日餘額'],[['0050','','','','','',20]]);
-listedMargin.tables.push({data:[['融資金額(仟元)','','','','',300]]});
-const listedQuotes=fixture(['證券代號','','','','','','','','收盤價'],[['0050','','','','','','','',30]]);
-const otcMargin=fixture(['代號','','','','','','資餘額'],[['6488','','','','','',10]],[['','融資金(仟元)','','','','',100]]);
-const otcQuotes=fixture(['代號','','收盤'],[['6488','',12]]);
-assert.equal(financingSource.calculate('2026-11-18',listedMargin,listedQuotes,otcMargin,otcQuotes).financingRate,180,'weight by financing amounts across both markets');
-assert.throws(()=>financingSource.calculate('2026-11-17',listedMargin,listedQuotes,otcMargin,otcQuotes));
+const financingFixture={as_of:'2026-11-18',series:{d:['2026-11-17','2026-11-18'],v:[1.5228,1.5441]}};
+assert.deepEqual(financingSource.normalize(financingFixture),[
+  {date:'2026-11-17',financingRate:152.28,financingSource:'FinLab'},
+  {date:'2026-11-18',financingRate:154.41,financingSource:'FinLab'}
+],'provider multiples convert to percentages');
+for(const invalid of [
+  {as_of:'2026-11-19'},
+  {series:{d:['2026-11-18'],v:[0]}},
+  {series:{d:['2026-11-18','2026-11-18'],v:[1.5,1.6]}},
+  {series:{d:['2026-02-31','2026-11-18'],v:[1.5,1.6]}},
+  {series:{d:['2026-11-18'],v:[]}}
+])assert.throws(()=>financingSource.normalize({...financingFixture,...invalid}));
 const migrated=mergeHistory([{date:'2026-11-18',listedBalance:5,otcBalance:1,keepRate:190}]);
 assert.equal(migrated[0].financingRate,null,'whole-account rates must not become financing-only rates');
 const updated=mergeHistory(migrated,[{date:'2026-11-18',financingRate:154.41,unpriced:13}]);
 assert.equal(updated[0].keepRate,190);
 assert.equal(updated[0].financingRate,154.41);
 assert.equal(mergeHistory(updated,[{date:'2026-11-18',financingRate:null}])[0].financingRate,154.41,'temporary missing rates preserve saved history');
+const finlabUpdated=mergeHistory(updated,financingSource.normalize(financingFixture));
+assert.equal(finlabUpdated.at(-1).financingSource,'FinLab');
+assert.equal(mergeHistory(finlabUpdated,[{date:'2026-11-18',financingRate:199}]).at(-1).financingRate,154.41,'old backup imports preserve the website series');
 const body={stat:'OK',data:Array.from({length:25},(_,i)=>({date:new Date(Date.UTC(2026,9,i+1)).toISOString().slice(0,10).replaceAll('-',''),marginAmt:600000000+i*100000}))};
 const rows=normalize({...body,data:[...body.data].reverse()});
 assert.equal(rows[0].balance,6000,'thousands to hundred-million TWD');
@@ -59,7 +66,7 @@ function handler(){delete require.cache[require.resolve('../api/margin')];return
 function response(){return{headers:{},code:200,setHeader(k,v){this.headers[k]=v;},status(n){this.code=n;return this;},json(v){this.body=v;return this;}};}
 (async()=>{
   const original=global.fetch,originalLoad=financingSource.load;let count=0;
-  const financingLoad=async date=>({date,financingRate:186+dates.slice(-3).indexOf(date.replaceAll('-',''))/10,unpriced:0});
+  const financingLoad=async()=>dates.slice(-3).map((day,i)=>({date:day.replace(/^(....)(..)(..)$/, '$1-$2-$3'),financingRate:186+i/10,financingSource:'FinLab'}));
   financingSource.load=financingLoad;
   const good=async url=>{
     count++;const u=new URL(url);
@@ -78,10 +85,10 @@ function response(){return{headers:{},code:200,setHeader(k,v){this.headers[k]=v;
     assert.equal(count-before,3,'source requests shared by concurrent API requests');
     assert.equal(a.code,200);assert.equal(a.body.data.length,110,'90 visible rows plus moving-average warm-up');
     assert.equal(a.body.data.slice(-90).length,90);assert.equal(a.body.data.at(-1).ma20!=null,true);
-    assert.deepEqual(a.body.data.map(({financingRate,unpriced,...row})=>row),combinedBalance);
+    assert.deepEqual(a.body.data.map(({financingRate,financingSource,...row})=>row),combinedBalance);
     assert.equal(a.body.data.filter(r=>r.balance!=null).length,39,'leave missing OTC dates empty');
     assert.equal(a.body.data.filter(r=>r.financingRate!=null).length,3,'keep missing financing history empty');
-    assert.equal(a.body.maintenance.latest.financingRate,186.2);assert.equal(a.body.unit,'億元');assert.equal(a.body.version,4);assert.deepEqual(a.body,b.body);
+    assert.equal(a.body.maintenance.latest.financingRate,186.2);assert.equal(a.body.unit,'億元');assert.equal(a.body.version,5);assert.deepEqual(a.body,b.body);
     const cachedCount=count;await main({method:'GET'},response());assert.equal(count,cachedCount,'hourly cache avoids extra upstream requests');
     financingSource.load=async()=>{throw Error('temporary outage');};
     const partial=handler();global.fetch=good;

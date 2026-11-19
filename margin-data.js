@@ -62,11 +62,14 @@
         const listedBalance = Number.isFinite(row.listedBalance) && row.listedBalance >= 0 ? row.listedBalance : previous?.listedBalance ?? null;
         const otcBalance = Number.isFinite(row.otcBalance) && row.otcBalance >= 0 ? row.otcBalance : previous?.otcBalance ?? null;
         const keepRate = Number.isFinite(row.keepRate) && row.keepRate > 0 ? row.keepRate : previous?.keepRate ?? null;
-        const financingRate = Number.isFinite(row.financingRate) && row.financingRate > 0 ? row.financingRate : previous?.financingRate ?? null;
+        const useIncomingRate = Number.isFinite(row.financingRate) && row.financingRate > 0 &&
+          (row.financingSource === 'FinLab' || previous?.financingSource !== 'FinLab');
+        const financingRate = useIncomingRate ? row.financingRate : previous?.financingRate ?? null;
+        const financingSource = useIncomingRate ? (row.financingSource === 'FinLab' ? 'FinLab' : 'exchange') : previous?.financingSource ?? null;
         const unpriced = Number.isInteger(row.unpriced) && row.unpriced >= 0 ? row.unpriced : previous?.unpriced ?? null;
         if (listedBalance == null && otcBalance == null && keepRate == null && financingRate == null) continue;
         const balance = listedBalance != null && otcBalance != null ? listedBalance + otcBalance : null;
-        byDate.set(row.date, { date: row.date, listedBalance, otcBalance, balance, keepRate, financingRate, unpriced });
+        byDate.set(row.date, { date: row.date, listedBalance, otcBalance, balance, keepRate, financingRate, financingSource, unpriced });
       }
     }
     const sorted = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
