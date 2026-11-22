@@ -40,6 +40,7 @@
   let state = loadState();
   const money = value => `NT$${Math.round(Number(value || 0)).toLocaleString('zh-TW')}`;
   const money2 = value => `NT$${Number(value || 0).toLocaleString('zh-TW', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const signedMoney2 = value => `${value>0?'+':value<0?'-':''}${money2(Math.abs(value))}`;
   const number = value => Number(value || 0).toLocaleString('zh-TW', { maximumFractionDigits: 4 });
   const pct = value => `${Number(value || 0).toFixed(1)}%`;
   const betaFmt = value => Number(value || 0).toFixed(2);
@@ -118,6 +119,23 @@
     const amount = (price - cost) * quantity, percent = (price / cost - 1) * 100;
     return Number.isFinite(amount) && Number.isFinite(percent) ? { amount, percent } : null;
   }
+  function portfolioPnl() {
+    const positions = state.holdings.filter(holding => holding.symbol && Number(holding.quantity) > 0);
+    let amount = 0, cost = 0, count = 0;
+    for (const holding of positions) {
+      const pnl = holdingPnl(holding);
+      if (pnl == null) continue;
+      amount += pnl.amount;
+      cost += costOf(holding) * Number(holding.quantity);
+      count++;
+    }
+    return {
+      amount: count ? amount : null,
+      percent: cost > 0 ? amount / cost * 100 : null,
+      count,
+      total: positions.length
+    };
+  }
   function costAfterBuy(holding, quantity, price) {
     const before = Math.max(0, Number(holding.quantity || 0)), cost = costOf(holding);
     if (before === 0) return price;
@@ -189,6 +207,20 @@
     $('betaMeterScale').innerHTML=Array.from({length:5},(_,i)=>`<span>${Number((scaleMax*i/4).toFixed(3))}</span>`).join('');
     $('betaMeter').setAttribute('aria-label',`目前 Beta ${betaFmt(p.beta)}，目標 ${betaFmt(t)}，容忍區間 ${betaFmt(low)} 至 ${betaFmt(high)}`);
     $('totalAssets').textContent = money(p.total);
+    const pnl=portfolioPnl();
+    $('totalPnl').classList.toggle('holding-profit',pnl.amount>0);
+    $('totalPnl').classList.toggle('holding-loss',pnl.amount<0);
+    $('totalPnlAmount').textContent=pnl.amount==null?'—':signedMoney2(pnl.amount);
+    $('totalPnlPercent').textContent=pnl.percent==null?'—':`${pnl.percent>0?'+':''}${pnl.percent.toFixed(2)}%`;
+    if(pnl.total===0){
+      $('totalPnlCoverage').textContent='新增持股並填寫每股成本後可查看損益。';
+    }else if(pnl.count===0){
+      $('totalPnlCoverage').textContent='填寫持股成本並確認報價後可查看損益。';
+    }else if(pnl.count<pnl.total){
+      $('totalPnlCoverage').textContent=`僅計入 ${pnl.count} / ${pnl.total} 檔，報酬率按已計入持股的成本計算。`;
+    }else{
+      $('totalPnlCoverage').textContent=`已計入 ${pnl.count} 檔持股，報酬率按持股總成本計算。`;
+    }
     $('leverValue').textContent = money(p.lever); $('coreValue').textContent = money(p.core); $('cashValue').textContent = money(p.cash);
     $('holdingCount').textContent = `${state.holdings.length} 個標的`;
     const total = p.total || 1;
@@ -209,7 +241,7 @@
       const price=priceOf(h),high=holdingHighOf(h.symbol),gain=MarketQuotes.gainToHigh(price,high?.highPrice);
       const cost=costOf(h),pnl=holdingPnl(h);
       const pnlClass=pnl?.amount>0?'holding-profit':pnl?.amount<0?'holding-loss':'';
-      const pnlText=pnl?`${pnl.amount>0?'+':pnl.amount<0?'-':''}${money2(Math.abs(pnl.amount))}<small class="holding-pnl-percent">${pnl.percent>0?'+':''}${pnl.percent.toFixed(2)}%</small>`:'—';
+      const pnlText=pnl?`${signedMoney2(pnl.amount)}<small class="holding-pnl-percent">${pnl.percent>0?'+':''}${pnl.percent.toFixed(2)}%</small>`:'—';
       const symbol=escapeHtml(h.symbol),name=escapeHtml(h.name||h.symbol),category=categoryName(h.category);
       return `<tr><td><div class="overview-asset"><div class="overview-asset-heading"><strong title="${symbol}">${symbol}</strong><span class="tag ${categoryClass(h.category)}" title="${category}">${h.category==='cash'?'類現金':category}</span></div><small title="${name}">${name}</small></div></td><td class="right">${price ? money2(price) : '—'}</td><td class="right">${cost==null?'—':money2(cost)}</td><td class="right">${money(marketValue(h))}</td><td class="right holding-pnl ${pnlClass}">${pnlText}</td><td class="right">${number(h.quantity)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td><td class="right">${high?`${money2(high.highPrice)}<small class="holding-high-date">${escapeHtml(high.highPriceDate||'')}</small>`:'—'}</td><td class="right">${gain==null?'—':gain===0?'已達高點':`+${gain.toFixed(2)}%`}</td></tr>`;
     }).join('');

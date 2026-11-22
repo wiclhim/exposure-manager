@@ -8,6 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8').replac
     set: value => state = value,
     get: () => state,
     pnl: holdingPnl,
+    summary: portfolioPnl,
     apply: applyRebalancePlan,
     undo: undoRebalancePlan
   };
@@ -66,4 +67,29 @@ assert.equal(api.pnl(current).amount, 0);
 api.set({ holdings: [{ ...holding, cost: null }], quoteCache: {}, cash: 1000 });
 assert.equal(apply(5).cost, null, 'unknown existing cost remains unknown after additional buys');
 
-console.log('PASS: optional/legacy costs, gain/loss, quote updates, average purchase cost, partial/full sales and rebalance undo');
+api.set({
+  holdings: [
+    { symbol: 'A', quantity: 10, cost: 100, manualPrice: 120 },
+    { symbol: 'B', quantity: 5, cost: 100, manualPrice: 80 },
+    { symbol: 'C', quantity: 5, cost: 0, manualPrice: 80 },
+    { symbol: 'D', quantity: 5, cost: 100, manualPrice: 0 },
+    { symbol: 'E', quantity: 0, cost: 100, manualPrice: 80 },
+    { symbol: '', quantity: 5, cost: 100, manualPrice: 80 }
+  ],
+  quoteCache: {},
+  cash: 999999
+});
+let totals = api.summary();
+assert.equal(totals.amount, 100);
+near(totals.percent, 100 / 1500 * 100, 'total return uses eligible cost weights');
+assert.equal(totals.count, 2);
+assert.equal(totals.total, 4, 'missing costs and missing quotes remain visible in coverage');
+api.get().quoteCache.A = { price: 130 };
+assert.equal(api.summary().amount, 200);
+api.set({ holdings: [{ symbol: 'A', quantity: 10, cost: null, manualPrice: 120 }], quoteCache: {} });
+assert.equal(api.summary().amount, null, 'no cost coverage cannot appear as zero profit');
+assert.equal(api.summary().percent, null);
+api.set({ holdings: [], quoteCache: {} });
+assert.equal(api.summary().total, 0);
+
+console.log('PASS: optional costs, gain/loss, quote updates, average purchase cost, rebalance undo and partial portfolio totals');
