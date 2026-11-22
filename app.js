@@ -107,6 +107,22 @@
     return Number(quote?.price || manualPrice(h) || 0);
   }
   function marketValue(h) { return Math.max(0, Number(h.quantity || 0)) * priceOf(h); }
+  function costOf(holding) {
+    const cost = Number(holding.cost);
+    return Number.isFinite(cost) && cost > 0 ? cost : null;
+  }
+  function holdingPnl(holding) {
+    const cost = costOf(holding), price = priceOf(holding), quantity = Number(holding.quantity);
+    if (cost == null || !Number.isFinite(price) || price <= 0 ||
+        !Number.isFinite(quantity) || quantity <= 0) return null;
+    const amount = (price - cost) * quantity, percent = (price / cost - 1) * 100;
+    return Number.isFinite(amount) && Number.isFinite(percent) ? { amount, percent } : null;
+  }
+  function costAfterBuy(holding, quantity, price) {
+    const before = Math.max(0, Number(holding.quantity || 0)), cost = costOf(holding);
+    if (before === 0) return price;
+    return cost == null ? null : (before * cost + quantity * price) / (before + quantity);
+  }
   function getPortfolio() {
     const totalPositions = state.holdings.reduce((sum, h) => sum + marketValue(h), 0);
     const cashPositions = state.holdings.filter(h => h.category === 'cash').reduce((sum, h) => sum + marketValue(h), 0);
@@ -188,11 +204,14 @@
     const holdings=state.holdings.filter(h=>h.symbol);
     const visible=holdings.filter(h=>`${h.symbol} ${h.name||''}`.toLowerCase().includes(search)).sort((a,b)=>marketValue(b)-marketValue(a));
     $('overviewHoldingsCount').textContent=search?`顯示 ${visible.length} / ${holdings.length} 檔`:`共 ${holdings.length} 檔持股`;
-    if (!visible.length) body.innerHTML = `<tr><td colspan="7" class="empty-cell">${search?'找不到符合的持股。':'尚未新增持股，請至「設定 → 持股」輸入資料。'}</td></tr>`;
+    if (!visible.length) body.innerHTML = `<tr><td colspan="9" class="empty-cell">${search?'找不到符合的持股。':'尚未新增持股，請至「設定 → 持股」輸入資料。'}</td></tr>`;
     else body.innerHTML = visible.map(h => {
       const price=priceOf(h),high=holdingHighOf(h.symbol),gain=MarketQuotes.gainToHigh(price,high?.highPrice);
+      const cost=costOf(h),pnl=holdingPnl(h);
+      const pnlClass=pnl?.amount>0?'holding-profit':pnl?.amount<0?'holding-loss':'';
+      const pnlText=pnl?`${pnl.amount>0?'+':pnl.amount<0?'-':''}${money2(Math.abs(pnl.amount))}<small class="holding-pnl-percent">${pnl.percent>0?'+':''}${pnl.percent.toFixed(2)}%</small>`:'—';
       const symbol=escapeHtml(h.symbol),name=escapeHtml(h.name||h.symbol),category=categoryName(h.category);
-      return `<tr><td><div class="overview-asset"><div class="overview-asset-heading"><strong title="${symbol}">${symbol}</strong><span class="tag ${categoryClass(h.category)}" title="${category}">${h.category==='cash'?'類現金':category}</span></div><small title="${name}">${name}</small></div></td><td class="right">${price ? money2(price) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${number(h.quantity)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td><td class="right">${high?`${money2(high.highPrice)}<small class="holding-high-date">${escapeHtml(high.highPriceDate||'')}</small>`:'—'}</td><td class="right">${gain==null?'—':gain===0?'已達高點':`+${gain.toFixed(2)}%`}</td></tr>`;
+      return `<tr><td><div class="overview-asset"><div class="overview-asset-heading"><strong title="${symbol}">${symbol}</strong><span class="tag ${categoryClass(h.category)}" title="${category}">${h.category==='cash'?'類現金':category}</span></div><small title="${name}">${name}</small></div></td><td class="right">${price ? money2(price) : '—'}</td><td class="right">${cost==null?'—':money2(cost)}</td><td class="right">${money(marketValue(h))}</td><td class="right holding-pnl ${pnlClass}">${pnlText}</td><td class="right">${number(h.quantity)}</td><td class="right">${pct(p.total ? marketValue(h)/p.total*100 : 0)}</td><td class="right">${high?`${money2(high.highPrice)}<small class="holding-high-date">${escapeHtml(high.highPriceDate||'')}</small>`:'—'}</td><td class="right">${gain==null?'—':gain===0?'已達高點':`+${gain.toFixed(2)}%`}</td></tr>`;
     }).join('');
     renderMarketCard();
     publishIndexQuotes();
@@ -275,7 +294,7 @@
       const qError = state.quoteCache[h.symbol]?.error;
       const qText = qError ? (q ? '更新失敗，沿用上次價' : '報價失敗') : q ? (isTaiwanMarketOpen() ? '盤中最後成交' : '盤後最後成交') : '等待永豐報價';
       const qClass = q && !qError ? 'live' : '';
-      return `<tr><td><div class="asset-cell"><div class="asset-avatar">${escapeHtml(String(h.symbol).slice(0,4))}</div><div class="asset-name"><strong>${escapeHtml(h.name || h.symbol)}</strong><small>${escapeHtml(h.symbol)}</small></div></div></td><td><span class="tag ${categoryClass(h.category)}">${categoryName(h.category)}</span></td><td class="right">${number(h.quantity)}</td><td class="right">${money2(h.cost || 0)}</td><td class="right">${priceOf(h) ? money2(priceOf(h)) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${betaFmt(h.beta)}</td><td><span class="quote-status ${qClass}" title="${q ? `更新 ${fmtTime(q.quoteTime || q.lastUpdated)}` : ''}">${qText}</span></td><td><button class="table-action" data-edit="${h.id}">編輯</button> <button class="table-action danger" data-delete="${h.id}">刪除</button></td></tr>`;
+      return `<tr><td><div class="asset-cell"><div class="asset-avatar">${escapeHtml(String(h.symbol).slice(0,4))}</div><div class="asset-name"><strong>${escapeHtml(h.name || h.symbol)}</strong><small>${escapeHtml(h.symbol)}</small></div></div></td><td><span class="tag ${categoryClass(h.category)}">${categoryName(h.category)}</span></td><td class="right">${number(h.quantity)}</td><td class="right">${costOf(h)==null?'—':money2(costOf(h))}</td><td class="right">${priceOf(h) ? money2(priceOf(h)) : '—'}</td><td class="right">${money(marketValue(h))}</td><td class="right">${betaFmt(h.beta)}</td><td><span class="quote-status ${qClass}" title="${q ? `更新 ${fmtTime(q.quoteTime || q.lastUpdated)}` : ''}">${qText}</span></td><td><button class="table-action" data-edit="${h.id}">編輯</button> <button class="table-action danger" data-delete="${h.id}">刪除</button></td></tr>`;
     }).join('');
   }
   function calculateRebalance() {
@@ -733,7 +752,7 @@
 
   function clearHoldingForm() {
     $('holdingForm').reset(); $('editHoldingId').value=''; $('holdingModalTitle').textContent='新增持股';
-    $('assetCategory').value='core'; $('assetBeta').value='1'; $('assetQuantity').value='0'; $('assetCost').value='0'; $('assetPrice').value='0';
+    $('assetCategory').value='core'; $('assetBeta').value='1'; $('assetQuantity').value='0'; $('assetCost').value=''; $('assetPrice').value='0';
     $('deleteHoldingBtn').hidden=true; $('assetQuoteHint').textContent='永豐本機服務連線後會更新報價；也可輸入手動備援價。';
   }
   function openAddHolding() { clearHoldingForm(); openModal('holdingModal'); }
@@ -741,7 +760,7 @@
     const h=state.holdings.find(x=>x.id===id); if(!h)return;
     clearHoldingForm(); $('holdingModalTitle').textContent='編輯持股'; $('editHoldingId').value=h.id;
     $('assetSymbol').value=h.symbol; $('assetName').value=h.name||''; $('assetCategory').value=h.category||'core'; $('assetBeta').value=h.beta ?? 1;
-    $('assetQuantity').value=h.quantity ?? 0; $('assetCost').value=h.cost ?? 0; $('assetPrice').value=manualPrice(h);
+    $('assetQuantity').value=h.quantity ?? 0; $('assetCost').value=costOf(h) ?? ''; $('assetPrice').value=manualPrice(h);
     $('deleteHoldingBtn').hidden=false;
     const q=h.quote||state.quoteCache[h.symbol]; $('assetQuoteHint').textContent=q?`目前報價 ${money2(q.price)} · 更新 ${fmtTime(q.quoteTime||q.lastUpdated)}；手動備援價 ${money2(manualPrice(h))}`:'此標的尚無 API 報價，將先使用手動價格。';
     openModal('holdingModal');
@@ -751,7 +770,9 @@
     const id=$('editHoldingId').value, symbol=$('assetSymbol').value.trim().toUpperCase();
     if(!symbol)return;
     const previous=state.holdings.find(x=>x.id===id);
-    const asset={id:id||uid(),symbol,name:$('assetName').value.trim()||symbol,category:$('assetCategory').value,beta:Number($('assetBeta').value),quantity:Number($('assetQuantity').value),cost:Number($('assetCost').value),manualPrice:Number($('assetPrice').value),quote:previous?.symbol===symbol?previous.quote:state.quoteCache[symbol]||null};
+    const cost=Number($('assetCost').value);
+    if(!Number.isFinite(cost)||cost<0){notify('平均成本請填非負數，或留白');return;}
+    const asset={id:id||uid(),symbol,name:$('assetName').value.trim()||symbol,category:$('assetCategory').value,beta:Number($('assetBeta').value),quantity:Number($('assetQuantity').value),cost:cost>0?cost:null,manualPrice:Number($('assetPrice').value),quote:previous?.symbol===symbol?previous.quote:state.quoteCache[symbol]||null};
     if(id)state.holdings=state.holdings.map(x=>x.id===id?asset:x); else state.holdings.push(asset);
     persist(); closeModal('holdingModal'); renderAll(); if(currentPage==='holdings')renderHoldings(); notify('持倉資料已儲存'); void refreshQuotes();
   }
@@ -798,12 +819,11 @@
     const other=state.holdings.find(h=>h.id!==x.from.id && h.symbol===symbol);
     const newName=$('swapName').value.trim()||state.quoteCache[symbol]?.name||symbol;
     if(other){
-      const otherQty=Number(other.quantity||0), totalQty=otherQty+x.qty;
-      const mergedCost=totalQty>0?((otherQty*Number(other.cost||0))+(x.qty*x.newPrice))/totalQty:0;
-      other.quantity=totalQty; other.cost=mergedCost; other.name=newName; other.beta=x.newBeta; other.category=x.from.category; other.quote=state.quoteCache[symbol]||other.quote||null;
+      const mergedCost=x.qty>0?costAfterBuy(other,x.qty,x.newPrice):costOf(other);
+      other.quantity=Number(other.quantity||0)+x.qty; other.cost=mergedCost; other.name=newName; other.beta=x.newBeta; other.category=x.from.category; other.quote=state.quoteCache[symbol]||other.quote||null;
       state.holdings=state.holdings.filter(h=>h.id!==x.from.id);
     }else{
-      const newHolding={...x.from,symbol,name:newName,beta:x.newBeta,quantity:x.qty,manualPrice:x.newPrice,quote:state.quoteCache[symbol]||null};
+      const newHolding={...x.from,symbol,name:newName,beta:x.newBeta,quantity:x.qty,cost:x.qty>0?x.newPrice:null,manualPrice:x.newPrice,quote:state.quoteCache[symbol]||null};
       state.holdings=state.holdings.map(h=>h.id===x.from.id?newHolding:h);
     }
     persist(); closeModal('swapModal'); renderAll(); notify(`已將 ${x.from.symbol} 替換為 ${symbol}（僅更新模型持倉）`); void refreshQuotes();
@@ -845,7 +865,7 @@
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
   }
   function exportHoldings() {
-    const rows=[['代號','名稱','分類','數量','成本均價','目前價格','市值','Beta','報價時間','52 週最高價','高點日期','回到高點需漲%'],...state.holdings.map(h=>{const high=holdingHighOf(h.symbol),gain=MarketQuotes.gainToHigh(priceOf(h),high?.highPrice);return [h.symbol,h.name,categoryName(h.category),h.quantity,h.cost,priceOf(h),marketValue(h),h.beta,fmtTime(h.quote?.quoteTime||h.quote?.lastUpdated),high?.highPrice,high?.highPriceDate,gain?.toFixed(2)];})];
+    const rows=[['代號','名稱','分類','數量','成本均價','目前價格','市值','Beta','報價時間','52 週最高價','高點日期','回到高點需漲%','未實現損益','未實現報酬率%'],...state.holdings.map(h=>{const high=holdingHighOf(h.symbol),gain=MarketQuotes.gainToHigh(priceOf(h),high?.highPrice),pnl=holdingPnl(h);return [h.symbol,h.name,categoryName(h.category),h.quantity,costOf(h),priceOf(h),marketValue(h),h.beta,fmtTime(h.quote?.quoteTime||h.quote?.lastUpdated),high?.highPrice,high?.highPriceDate,gain?.toFixed(2),pnl?.amount.toFixed(2),pnl?.percent.toFixed(2)];})];
     csvDownload(`exposure-manager-holdings-${today()}.csv`,rows);
   }
   function exportHistory() {
@@ -940,7 +960,12 @@
   const rebalanceUi={beta:null,mode:'normal',precision:1000,excluded:new Set(),from:'',to:'',confirmation:''};
   function applyRebalancePlan(plan) {
     state.rebalanceUndo={at:new Date().toISOString(),holdings:clone(state.holdings),cash:state.cash,cashUsd:state.cashUsd||0};
-    plan.rows.forEach(row=>{row.h.quantity=Math.max(0,row.before+row.delta);});state.cash=plan.cash;
+    plan.rows.forEach(row=>{
+      if(row.delta>0)row.h.cost=costAfterBuy(row.h,row.delta,row.price);
+      row.h.quantity=Math.max(0,row.before+row.delta);
+      if(row.h.quantity===0&&row.delta<0)row.h.cost=null;
+    });
+    state.cash=plan.cash;
     state.rebalanceLog=state.rebalanceLog||[];state.rebalanceLog.push({at:new Date().toISOString(),mode:rebalanceUi.mode,beforeBeta:plan.p.beta,afterBeta:plan.beta,precision:rebalanceUi.precision,trades:plan.rows.filter(row=>row.delta).map(row=>({symbol:row.h.symbol,quantity:row.delta,price:row.price}))});
     persist();
   }
@@ -1185,7 +1210,7 @@
     const title = category==='lever'?'槓桿':category==='core'?'原形':'類現金';
     const rows = state.holdings.filter(h=>h.category===category);
     const custom = category==='cash' ? state.settings.cashMode==='custom' : state.settings.distribution?.[category]==='custom';
-    return `<article class="panel familiar-group"><div class="panel-top"><h2>${title} <small>${rows.length} 筆標的</small></h2></div><div class="familiar-switch"><span>個股佔比分配方式</span><button data-distribution="${category}:auto" aria-pressed="${!custom}">自動分配</button><button data-distribution="${category}:custom" aria-pressed="${custom}">自訂個股佔比</button></div>${rows.map((h,i)=>`<div class="familiar-holding" data-holding="${escapeHtml(h.id)}"><div class="panel-top"><strong>${title} ${i+1} ${escapeHtml(h.name!==h.symbol?h.name||'':'')}</strong><button class="text-button danger-text" data-remove-familiar="${escapeHtml(h.id)}">移除</button></div><div class="familiar-fields"><label>代號<input data-holding-field="symbol" value="${escapeHtml(h.symbol)}" maxlength="12" placeholder="例如 0050"></label><label>股數<input data-holding-field="quantity" type="number" min="0" step="1" value="${Number(h.quantity||0)}"></label>${category==='lever'?`<label>曝險倍數<input data-holding-field="beta" type="number" min="0" max="10" step="0.1" value="${Number(h.beta??2)}"></label>`:''}${custom?`<label>個股佔比 %<input data-holding-field="targetWeight" type="number" min="0" max="100" value="${Number(h.targetWeight??100/Math.max(1,rows.length))}"></label>`:''}</div><div class="helper-text">目前價格 ${priceOf(h)?money2(priceOf(h)):'等待報價'} · 市值 ${money(marketValue(h))}</div><details><summary>手動價格與進階資料</summary><div class="familiar-fields"><label>手動價格（新台幣）<input data-holding-field="manualPrice" type="number" min="0" step="0.01" value="${Number(h.manualPrice||0)}"></label><label>Beta<input data-holding-field="beta" type="number" step="0.1" value="${Number(h.beta||0)}"></label></div></details></div>`).join('')}<button class="secondary-button" data-add-familiar="${category}">新增${title}${category==='cash'?'標的':''}</button></article>`;
+    return `<article class="panel familiar-group"><div class="panel-top"><h2>${title} <small>${rows.length} 筆標的</small></h2></div><div class="familiar-switch"><span>個股佔比分配方式</span><button data-distribution="${category}:auto" aria-pressed="${!custom}">自動分配</button><button data-distribution="${category}:custom" aria-pressed="${custom}">自訂個股佔比</button></div>${rows.map((h,i)=>`<div class="familiar-holding" data-holding="${escapeHtml(h.id)}"><div class="panel-top"><strong>${title} ${i+1} ${escapeHtml(h.name!==h.symbol?h.name||'':'')}</strong><button class="text-button danger-text" data-remove-familiar="${escapeHtml(h.id)}">移除</button></div><div class="familiar-fields"><label>代號<input data-holding-field="symbol" value="${escapeHtml(h.symbol)}" maxlength="12" placeholder="例如 0050"></label><label>股數<input data-holding-field="quantity" type="number" min="0" step="1" value="${Number(h.quantity||0)}"></label><label>每股平均成本（選填）<input data-holding-field="cost" type="number" min="0" step="any" value="${costOf(h)??''}" placeholder="可留白"></label>${category==='lever'?`<label>曝險倍數<input data-holding-field="beta" type="number" min="0" max="10" step="0.1" value="${Number(h.beta??2)}"></label>`:''}${custom?`<label>個股佔比 %<input data-holding-field="targetWeight" type="number" min="0" max="100" value="${Number(h.targetWeight??100/Math.max(1,rows.length))}"></label>`:''}</div><div class="helper-text">目前價格 ${priceOf(h)?money2(priceOf(h)):'等待報價'} · 市值 ${money(marketValue(h))}</div><details><summary>手動價格與進階資料</summary><div class="familiar-fields"><label>手動價格（新台幣）<input data-holding-field="manualPrice" type="number" min="0" step="0.01" value="${Number(h.manualPrice||0)}"></label><label>Beta<input data-holding-field="beta" type="number" step="0.1" value="${Number(h.beta||0)}"></label></div></details></div>`).join('')}<button class="secondary-button" data-add-familiar="${category}">新增${title}${category==='cash'?'標的':''}</button></article>`;
   }
   function refreshFamiliarHoldingValues() {
     document.querySelectorAll('.familiar-holding[data-holding]').forEach(card=>{
@@ -1271,11 +1296,11 @@
         if(key==='symbol') {
           const symbol=input.value.trim().toUpperCase();
           if(symbol && !/^[A-Z0-9.-]{1,12}$/.test(symbol)){notify('請輸入有效標的代號');input.value=h.symbol;return;}
-          if(symbol!==h.symbol){h.symbol=symbol;h.name=symbol;h.quote=null;h.manualPrice=0;}
+          if(symbol!==h.symbol){h.symbol=symbol;h.name=symbol;h.quote=null;h.manualPrice=0;h.cost=null;}
         } else {
           const value=Number(input.value);
-          if(!Number.isFinite(value)||value<0||(key==='targetWeight'&&value>100)||(key==='beta'&&value>10)){notify('請檢查欄位數值');input.value=h[key]||0;return;}
-          h[key]=value;
+          if(input.validity.badInput||!Number.isFinite(value)||value<0||(key==='targetWeight'&&value>100)||(key==='beta'&&value>10)){notify('請檢查欄位數值');input.value=key==='cost'?(costOf(h)??''):h[key]||0;return;}
+          h[key]=key==='cost'?(value>0?value:null):value;
         }
         persist();renderAll();
       }
@@ -1294,7 +1319,7 @@
         return;
       }
       if(button.dataset.settingsSection){settingsSection=button.dataset.settingsSection;renderFamiliarSettings();}
-      if(button.dataset.addFamiliar){const cat=button.dataset.addFamiliar;state.holdings.push({id:uid(),symbol:'',name:'',category:cat,quantity:0,beta:cat==='lever'?2:cat==='core'?1:0,cost:0,manualPrice:0,targetWeight:100});persist();renderAll();renderFamiliarSettings();}
+      if(button.dataset.addFamiliar){const cat=button.dataset.addFamiliar;state.holdings.push({id:uid(),symbol:'',name:'',category:cat,quantity:0,beta:cat==='lever'?2:cat==='core'?1:0,cost:null,manualPrice:0,targetWeight:100});persist();renderAll();renderFamiliarSettings();}
       if(button.dataset.removeFamiliar){const id=button.dataset.removeFamiliar;const h=state.holdings.find(x=>x.id===id);if(h&&confirm(`移除 ${h.symbol||'此標的'}？`)){state.holdings=state.holdings.filter(x=>x.id!==id);persist();renderAll();renderFamiliarSettings();}}
       if(button.dataset.distribution){const [cat,mode]=button.dataset.distribution.split(':');state.settings.distribution=state.settings.distribution||{};state.settings.distribution[cat]=mode;state.holdings.filter(h=>h.category===cat).forEach(h=>{if(h.targetWeight==null)h.targetWeight=100/state.holdings.filter(x=>x.category===cat).length;});persist();renderAll();renderFamiliarSettings();}
       if(button.dataset.cashMode){state.settings.cashMode=button.dataset.cashMode;persist();renderFamiliarSettings();}

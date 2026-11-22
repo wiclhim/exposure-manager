@@ -5,8 +5,9 @@ html{overflow-y:scroll;scrollbar-gutter:stable}
 .market-chart,.index-indicators,.index-indicators section{min-width:0;max-width:100%}
 .market-chart svg,.index-indicators svg{max-width:100%}
 .overview-table-panel>.table-wrap{overflow-x:auto;scrollbar-width:thin;scrollbar-color:#acb5a8 #edf0eb;padding-bottom:4px}
-.overview-table-panel table{min-width:750px;table-layout:fixed;white-space:nowrap}
+.overview-table-panel table{min-width:1030px;table-layout:fixed;white-space:nowrap}
 .overview-table-panel .holding-symbol-column{width:160px}
+.overview-table-panel .holding-pnl-column{width:136px}
 .overview-table-panel .holding-peak-column{width:108px}
 .overview-table-panel .holding-gain-column{width:114px}
 .overview-table-panel :is(th,td){font-variant-numeric:tabular-nums}
@@ -16,6 +17,9 @@ html{overflow-y:scroll;scrollbar-gutter:stable}
 .overview-asset-heading .tag{flex:none;padding:2px 4px;border-radius:4px;font-size:9px;line-height:1.2;white-space:nowrap}
 .overview-asset>small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:5px;font-size:10px;color:#74816e}
 .holding-high-date{display:block;font-size:10px;color:#7c8875;margin-top:4px}
+.holding-pnl-percent{display:block;font-size:11px;margin-top:4px}
+.holding-pnl.holding-profit{color:#b0665e}
+.holding-pnl.holding-loss{color:#638977}
 .holding-high-note{font-size:11px;color:#74816e;line-height:1.8;margin:10px 0 8px}
 @media(max-width:850px){.overview-grid{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:640px){
