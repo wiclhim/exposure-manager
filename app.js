@@ -131,6 +131,7 @@
     }
     return {
       amount: count ? amount : null,
+      cost: count ? cost : null,
       percent: cost > 0 ? amount / cost * 100 : null,
       count,
       total: positions.length
@@ -208,6 +209,7 @@
     $('betaMeter').setAttribute('aria-label',`目前 Beta ${betaFmt(p.beta)}，目標 ${betaFmt(t)}，容忍區間 ${betaFmt(low)} 至 ${betaFmt(high)}`);
     $('totalAssets').textContent = money(p.total);
     const pnl=portfolioPnl();
+    $('totalHoldingCost').textContent=pnl.cost==null?'—':money2(pnl.cost);
     $('totalPnl').classList.toggle('holding-profit',pnl.amount>0);
     $('totalPnl').classList.toggle('holding-loss',pnl.amount<0);
     $('totalPnlAmount').textContent=pnl.amount==null?'—':signedMoney2(pnl.amount);

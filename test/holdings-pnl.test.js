@@ -81,6 +81,7 @@ api.set({
 });
 let totals = api.summary();
 assert.equal(totals.amount, 100);
+assert.equal(totals.cost, 1500, 'total cost uses the same eligible holdings as profit');
 near(totals.percent, 100 / 1500 * 100, 'total return uses eligible cost weights');
 assert.equal(totals.count, 2);
 assert.equal(totals.total, 4, 'missing costs and missing quotes remain visible in coverage');
@@ -88,6 +89,7 @@ api.get().quoteCache.A = { price: 130 };
 assert.equal(api.summary().amount, 200);
 api.set({ holdings: [{ symbol: 'A', quantity: 10, cost: null, manualPrice: 120 }], quoteCache: {} });
 assert.equal(api.summary().amount, null, 'no cost coverage cannot appear as zero profit');
+assert.equal(api.summary().cost, null, 'missing costs cannot appear as a zero cost basis');
 assert.equal(api.summary().percent, null);
 api.set({ holdings: [], quoteCache: {} });
 assert.equal(api.summary().total, 0);
