@@ -38,6 +38,19 @@
     });
     return withChanges(totals);
   }
+  function annualHigh(rows) {
+    const last=rows.at(-1);
+    if(!last)return {complete:false,high:null,distance:null};
+    const start=new Date(last.date+'T00:00:00Z');
+    start.setUTCDate(start.getUTCDate()-364);
+    const from=start.toISOString().slice(0,10);
+    const window=rows.filter(row=>row.date>=from&&row.date<=last.date);
+    const complete=last.yearStart===from&&last.yearSessions===window.length&&
+      window.every(row=>Number.isFinite(row.balance)&&row.balance>=0);
+    if(!complete)return {complete:false,high:null,distance:null};
+    const high=window.reduce((best,row)=>!best||row.balance>best.balance?row:best,null);
+    return {complete:true,high,distance:high.balance>0?(last.balance/high.balance-1)*100:null};
+  }
   function withChanges(totals) {
     return totals.map((row, i) => {
       const previous = totals[i - 1]?.balance;
@@ -69,7 +82,12 @@
         const unpriced = Number.isInteger(row.unpriced) && row.unpriced >= 0 ? row.unpriced : previous?.unpriced ?? null;
         if (listedBalance == null && otcBalance == null && keepRate == null && financingRate == null) continue;
         const balance = listedBalance != null && otcBalance != null ? listedBalance + otcBalance : null;
-        byDate.set(row.date, { date: row.date, listedBalance, otcBalance, balance, keepRate, financingRate, financingSource, unpriced });
+        const merged={ date: row.date, listedBalance, otcBalance, balance, keepRate, financingRate, financingSource, unpriced };
+        const yearStart=row.yearStart??previous?.yearStart,yearSessions=row.yearSessions??previous?.yearSessions;
+        if(/^\d{4}-\d{2}-\d{2}$/.test(yearStart)&&yearStart<=row.date&&Number.isInteger(yearSessions)&&yearSessions>0){
+          Object.assign(merged,{yearStart,yearSessions});
+        }
+        byDate.set(row.date,merged);
       }
     }
     const sorted = [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
@@ -98,5 +116,5 @@
     if(current.length)groups.push(current);
     return groups;
   }
-  return {normalize,summary,addOtcBalance,normalizeMaintenance,combine,segments,mergeHistory};
+  return {normalize,summary,addOtcBalance,normalizeMaintenance,combine,segments,mergeHistory,annualHigh};
 });

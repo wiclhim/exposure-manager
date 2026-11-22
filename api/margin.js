@@ -1,9 +1,8 @@
 const {normalize,addOtcBalance}=require('../margin-data');
 const {load:loadFinancingHistory}=require('../financing-maintenance');
 const financingHistory=require('../data/financing-maintenance-20261118.json');
-const otcHistory=require('../data/otc-margin-20261117.json');
+const otcHistory=require('../data/otc-margin-year-20261120.json');
 let cached=null,pending=null;
-const HISTORY_ROWS=110; // 90 visible sessions plus the 20-session moving average warm-up.
 const OTC_TREND='https://www.tpex.org.tw/www/zh-tw/dashboardOtc/marginTrend?lang=zh-tw&days=240';
 const OTC_OVERVIEW='https://info.tpex.org.tw/api/mktInfo';
 async function loadOtcTrend() {
@@ -54,18 +53,28 @@ async function fetchTrend(name,date){
 async function loadTrend(name){
   const latest=await fetchTrend(name);
   let data=latest.data,historyIncomplete=false;
-  // TWSE caps each response at 60; anchor the next page before the earliest date.
-  if(data.length>=60){
+  const last=data.map(row=>String(row.date)).sort().at(-1);
+  if(!/^\d{8}$/.test(last))throw Error('Invalid trend date');
+  const cutoff=new Date(`${last.slice(0,4)}-${last.slice(4,6)}-${last.slice(6,8)}T00:00:00Z`);
+  cutoff.setUTCDate(cutoff.getUTCDate()-364);
+  const from=cutoff.toISOString().slice(0,10),rawFrom=from.replaceAll('-','');
+  // TWSE caps each response at 60. Continue until the full calendar year is covered.
+  while(data.map(row=>String(row.date)).sort()[0]>rawFrom){
     const first=data.map(row=>String(row.date)).sort()[0];
     if(!/^\d{8}$/.test(first))throw Error('Invalid trend date');
     const day=new Date(`${first.slice(0,4)}-${first.slice(4,6)}-${first.slice(6,8)}T00:00:00Z`);day.setUTCDate(day.getUTCDate()-1);
     try{
       const older=await fetchTrend(name,day.toISOString().slice(0,10).replaceAll('-',''));
+      if(!older.data.some(row=>String(row.date)<first))throw Error('History did not advance');
       const merged=new Map([...older.data.filter(r=>String(r.date)<first),...data].map(row=>[row.date,row]));
-      data=[...merged.values()].sort((a,b)=>String(a.date).localeCompare(String(b.date))).slice(-HISTORY_ROWS);
-    }catch{historyIncomplete=true;}
+      data=[...merged.values()].sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+    }catch{historyIncomplete=true;break;}
   }
-  return {body:{...latest,data},historyIncomplete};
+  const sorted=data.sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  const firstInYear=sorted.findIndex(row=>String(row.date)>=rawFrom);
+  data=sorted.slice(Math.max(0,firstInYear-1));
+  const yearSessions=data.filter(row=>String(row.date)>=rawFrom).length;
+  return {body:{...latest,data},historyIncomplete,from,yearSessions};
 }
 async function loadFinancingMaintenance(){
   const stored=new Map(financingHistory.map(row=>[row.date,row]));
@@ -96,10 +105,13 @@ module.exports=async function(req,res){
         if(financingResult.status!=='fulfilled')throw financingResult.reason;
         const financing=financingResult.value;
         const data=balance.map(row=>({...row,financingRate:financing.data.get(row.date)?.financingRate??null,financingSource:'FinLab'}));
+        if(!balanceResult.value.historyIncomplete){
+          Object.assign(data.at(-1),{yearStart:balanceResult.value.from,yearSessions:balanceResult.value.yearSessions});
+        }
         const latest=data.findLast(row=>Number.isFinite(row.financingRate))||null;
         const maintenance={name:'台灣－上市櫃融資維持率（FinLab 估算）',scope:'上市＋上櫃融資股票',unit:'%',source:'FinLab',url:'https://finlab.finance/tools/margin-maintenance-ratio',latest,error:financing.error};
         const otcError=![...recentOtc,...fallbackOtc].some(row=>row.date===lastListedDate);
-        const payload={version:5,source:'臺灣證券交易所、證券櫃檯買賣中心',scope:'上市＋上櫃融資餘額',unit:'億元',fetchedAt:new Date().toISOString(),historyIncomplete:balanceResult.value.historyIncomplete,otcError,maintenance,data};
+        const payload={version:6,source:'臺灣證券交易所、證券櫃檯買賣中心',scope:'上市＋上櫃融資餘額',unit:'億元',fetchedAt:new Date().toISOString(),historyIncomplete:balanceResult.value.historyIncomplete,otcError,maintenance,data};
         const ttl=financing.error||!latest||latest.date!==listed.at(-1).date||otcError||balance.at(-1).balance==null||payload.historyIncomplete?300:3600;
         cached={at:Date.now(),payload,ttl};
       })().finally(()=>{pending=null;});

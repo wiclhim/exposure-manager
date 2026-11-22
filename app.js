@@ -209,10 +209,10 @@
     $('betaMeter').setAttribute('aria-label',`目前 Beta ${betaFmt(p.beta)}，目標 ${betaFmt(t)}，容忍區間 ${betaFmt(low)} 至 ${betaFmt(high)}`);
     $('totalAssets').textContent = money(p.total);
     const pnl=portfolioPnl();
-    $('totalHoldingCost').textContent=pnl.cost==null?'—':money2(pnl.cost);
+    $('totalHoldingCost').textContent=pnl.cost==null?'—':money(pnl.cost);
     $('totalPnl').classList.toggle('holding-profit',pnl.amount>0);
     $('totalPnl').classList.toggle('holding-loss',pnl.amount<0);
-    $('totalPnlAmount').textContent=pnl.amount==null?'—':signedMoney2(pnl.amount);
+    $('totalPnlAmount').textContent=pnl.amount==null?'—':`${pnl.amount>0?'+':pnl.amount<0?'-':''}${money(Math.abs(pnl.amount))}`;
     $('totalPnlPercent').textContent=pnl.percent==null?'—':`${pnl.percent>0?'+':''}${pnl.percent.toFixed(2)}%`;
     if(pnl.total===0){
       $('totalPnlCoverage').textContent='新增持股並填寫每股成本後可查看損益。';
