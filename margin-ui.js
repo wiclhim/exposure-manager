@@ -1,7 +1,7 @@
 (()=>{'use strict';
   const historyStore=window.exposureMarginHistory;
   const legacyCacheKey='exposureMarginCache.v3';
-  let payload=null,range=30,mobile=window.matchMedia('(max-width:640px)').matches,historyVersion=0;
+  let payload=null,range=60,mobile=window.matchMedia('(max-width:640px)').matches,historyVersion=0;
   const panel=document.createElement('article');panel.className='panel margin-panel';
   panel.innerHTML='<div class="panel-top"><div><div class="section-label">TAIEX · MARGIN BALANCE</div><h2>上市櫃融資水位</h2></div><button type="button" class="secondary-button small" id="marginRefresh">更新融資</button></div><p id="marginStatus" role="status">正在取得證交所盤後資料…</p><div id="marginContent"></div><p class="margin-note">融資餘額為上市與上櫃同日金額合計。任一市場缺資料時，該日留白。融資維持率採 FinLab 的上市櫃估算數列。</p><small>資料來源：<a href="https://www.twse.com.tw/zh/trading/margin/mi-margn.html" target="_blank" rel="noopener noreferrer">證交所信用交易統計</a>、<a href="https://www.tpex.org.tw/zh-tw/market-infomation.html" target="_blank" rel="noopener noreferrer">櫃買中心</a>、<a href="https://www.twse.com.tw/zh/trading/historical/mi-index.html" target="_blank" rel="noopener noreferrer">證交所收盤行情</a>、<a href="https://finlab.finance/tools/margin-maintenance-ratio" target="_blank" rel="noopener noreferrer">FinLab 融資維持率</a> · 僅供觀察，不更動 Beta 規則。</small>';
   document.querySelector('.index-price-panel').insertAdjacentElement('afterend',panel);
@@ -16,13 +16,22 @@
   let vixRows = [];
   let vixFailed = false;
 
+  function visibleRows(rows) {
+    const latest=rows.at(-1);
+    if(!latest)return [];
+    const start=new Date(latest.date+'T00:00:00Z');
+    start.setUTCDate(start.getUTCDate()-364);
+    const from=start.toISOString().slice(0,10);
+    return rows.filter(row=>row.date>=from).slice(-range);
+  }
+
   function inspectVix(index) {
     const row = vixRows[index];
     if (row) $('vixReading').textContent = `${row.date} 收盤 ${fmt(row.close)} 點 · 顯示 ${vixRows.length} 個交易日${vixFailed ? ' · 更新失敗，保留上次資料' : ''}`;
   }
 
   function renderVix() {
-    vixRows = vixData.slice(-range);
+    vixRows = visibleRows(vixData);
     if (!vixRows.length) {
       $('vixChart').replaceChildren();
       if (vixFailed) $('vixReading').textContent = '期交所資料暫時無法取得，可按「更新資料」重試。';
@@ -60,7 +69,7 @@
   }
   async function refreshVix(version) {
     try {
-      const response = await fetch('/api/vix');
+      const response = await fetch('/api/vix?v=2');
       if (!response.ok) throw new Error('VIXTWN unavailable');
       const { data } = await response.json();
       if(version!==historyVersion)return;
@@ -76,14 +85,15 @@
       renderVix();
     }
   }
-  function inspect(i){const row=payload?.data.slice(-range)[i];if(row)$('marginInspect').textContent=`${row.date}｜融資 ${fmt(row.balance)} 億元｜日增減 ${signed(row.change)} 億元｜20 日均線 ${fmt(row.ma20)} 億元｜融資維持率 ${row.financingRate==null?'未提供':fmt(row.financingRate)+'%'}`;}
+  function inspect(i){const row=payload&&visibleRows(payload.data)[i];if(row)$('marginInspect').textContent=`${row.date}｜融資 ${fmt(row.balance)} 億元｜日增減 ${signed(row.change)} 億元｜20 日均線 ${fmt(row.ma20)} 億元｜融資維持率 ${row.financingRate==null?'未提供':fmt(row.financingRate)+'%'}`;}
   function render(){
     if(!payload){
       $('marginStatus').textContent='尚無融資日線，可按「更新資料」取得。';
       $('marginContent').textContent='';
       return;
     }
-    const all=payload.data,rows=all.slice(-range),s=MarginData.summary(all),last=s.last;
+    const all=payload.data,rows=visibleRows(all),s=MarginData.summary(all),last=s.last;
+    const rangeLabel=range===252?'近一年':`近 ${range} 個交易日`;
     const annual=MarginData.annualHigh(all);
     const stale=last&&(Date.now()-Date.parse(last.date+'T00:00:00+08:00'))/86400000>7;
     const rates=rows.filter(r=>Number.isFinite(r.financingRate)),lastRate=rates.at(-1);
@@ -126,7 +136,7 @@
     }else svg+=`<text x="${left}" y="432">${payload.maintenance?.error?'維持率暫時無法取得':'此區間尚無融資維持率資料'}</text>`;
     [...new Set([0,Math.round((rows.length-1)/3),Math.round((rows.length-1)*2/3),rows.length-1])].forEach(i=>svg+=`<text x="${x(i)}" y="530" text-anchor="middle">${rows[i].date.slice(5).replace('-','/')}</text>`);
     rows.forEach((r,i)=>svg+=`<rect data-margin-point="${i}" x="${x(i)-plotWidth/2/Math.max(1,rows.length-1)}" y="18" width="${plotWidth/Math.max(1,rows.length-1)}" height="490" fill="transparent"><title>${r.date} · 融資 ${fmt(r.balance)} 億元 · 日增減 ${signed(r.change)} 億元 · 維持率 ${r.financingRate==null?'未提供':fmt(r.financingRate)+'%'}</title></rect>`);
-    $('marginContent').innerHTML=`<div class="margin-summary"><div><span>融資餘額</span><strong>${fmt(last?.balance)}<small> 億元</small></strong><small>${last?`上市 ${fmt(last.listedBalance)} ＋ 上櫃 ${fmt(last.otcBalance)}`:"等待合計資料"}</small></div><div><span>單日增減</span><strong style="color:${color(s.dayChange)}">${signed(s.dayChange)}<small> 億元</small></strong><small>上市 ${signed(s.listedDayChange)} 億元<br>上櫃 ${signed(s.otcDayChange)} 億元</small><small>${s.dayPercent==null?'資料不足':signed(s.dayPercent)+'%'}</small></div><div><span>近 5 個交易日增減</span><strong style="color:${color(s.fiveChange)}">${signed(s.fiveChange)}<small> 億元</small></strong><small>${s.fivePercent==null?'資料不足':signed(s.fivePercent)+'%'}</small></div><div><span>距近一年最高餘額</span><strong id="marginYearDistance">${annual.distance==null?'—':annual.distance.toFixed(2)+'%'}</strong><small id="marginYearHigh">${annual.high?`最高 ${fmt(annual.high.balance)} 億元<br>${annual.high.date}`:'等待完整近一年資料'}</small></div></div><div class="margin-toolbar"><div class="index-range">${[30,60,90].map(n=>`<button type="button" data-margin-days="${n}" aria-pressed="${range===n}">近 ${n} 日</button>`).join('')}</div><span>${rows[0].date} — ${rows.at(-1).date}</span></div><p id="marginCoverage" class="margin-note">近 ${range} 個交易日：融資合計 ${balanceCount} 筆、維持率 ${rates.length} 筆。${annual.complete?'':' 近一年融資餘額資料未齊，暫無高點比較。'}${balanceCount<rows.length?' 缺少同日上市或上櫃資料的日期留白。':''}${payload.otcError?' 櫃買中心暫時無法重新查詢，顯示已取得資料。':''}${rates.length<rows.length?'未取得的融資維持率日期留白。':''}${payload.maintenance?.error?' 維持率本次更新失敗，顯示已儲存資料。':''}${payload.historyIncomplete||payload.maintenance?.historyIncomplete?' 歷史資料補取未完整，暫顯示已取得部分。':''}</p><div class="margin-chart"><svg viewBox="0 0 ${chartWidth} 545" role="img" aria-label="上市櫃融資餘額、20 日均線、單日增減及上市櫃融資維持率（FinLab 估算）趨勢">${svg}</svg></div><div class="margin-legend"><span>綠線：融資餘額</span><span>金色虛線：20 日均線</span><span>柱狀：紅增／綠減</span><span class="maintenance-legend">紫線：上市櫃融資維持率（FinLab 估算）</span></div><p id="marginInspect" class="margin-inspect" role="status"></p><p class="margin-note">滑過或點選圖表可查看當日數字。日增減為相鄰資料日餘額之差；近 5 日比較最新與 5 個交易日前。近一年高點採最新資料日往前 364 日的最高融資合計。均線不足 20 筆時不繪製。融資維持率採 FinLab 的同一來源歷史序列，以融資股票市值除以上市櫃融資金額估算。缺少的日期留白。</p>`;
+    $('marginContent').innerHTML=`<div class="margin-summary"><div><span>融資餘額</span><strong>${fmt(last?.balance)}<small> 億元</small></strong><small>${last?`上市 ${fmt(last.listedBalance)} ＋ 上櫃 ${fmt(last.otcBalance)}`:"等待合計資料"}</small></div><div><span>單日增減</span><strong style="color:${color(s.dayChange)}">${signed(s.dayChange)}<small> 億元</small></strong><small>上市 ${signed(s.listedDayChange)} 億元<br>上櫃 ${signed(s.otcDayChange)} 億元</small><small>${s.dayPercent==null?'資料不足':signed(s.dayPercent)+'%'}</small></div><div><span>近 5 個交易日增減</span><strong style="color:${color(s.fiveChange)}">${signed(s.fiveChange)}<small> 億元</small></strong><small>${s.fivePercent==null?'資料不足':signed(s.fivePercent)+'%'}</small></div><div><span>距近一年最高餘額</span><strong id="marginYearDistance">${annual.distance==null?'—':annual.distance.toFixed(2)+'%'}</strong><small id="marginYearHigh">${annual.high?`最高 ${fmt(annual.high.balance)} 億元<br>${annual.high.date}`:'等待完整近一年資料'}</small></div></div><div class="margin-toolbar"><div class="index-range">${[60,120,252].map(n=>`<button type="button" data-margin-days="${n}" aria-pressed="${range===n}">${n===252?'近一年':`近 ${n} 日`}</button>`).join('')}</div><span>${rows[0].date} — ${rows.at(-1).date}</span></div><p id="marginCoverage" class="margin-note">${rangeLabel}：融資合計 ${balanceCount} 筆、維持率 ${rates.length} 筆。${annual.complete?'':' 近一年融資餘額資料未齊，暫無高點比較。'}${balanceCount<rows.length?' 缺少同日上市或上櫃資料的日期留白。':''}${payload.otcError?' 櫃買中心暫時無法重新查詢，顯示已取得資料。':''}${rates.length<rows.length?'未取得的融資維持率日期留白。':''}${payload.maintenance?.error?' 維持率本次更新失敗，顯示已儲存資料。':''}${payload.historyIncomplete||payload.maintenance?.historyIncomplete?' 歷史資料補取未完整，暫顯示已取得部分。':''}</p><div class="margin-chart"><svg viewBox="0 0 ${chartWidth} 545" role="img" aria-label="上市櫃融資餘額、20 日均線、單日增減及上市櫃融資維持率（FinLab 估算）趨勢">${svg}</svg></div><div class="margin-legend"><span>綠線：融資餘額</span><span>金色虛線：20 日均線</span><span>柱狀：紅增／綠減</span><span class="maintenance-legend">紫線：上市櫃融資維持率（FinLab 估算）</span></div><p id="marginInspect" class="margin-inspect" role="status"></p><p class="margin-note">滑過或點選圖表可查看當日數字。日增減為相鄰資料日餘額之差；近 5 日比較最新與 5 個交易日前。近一年高點採最新資料日往前 364 日的最高融資合計。均線不足 20 筆時不繪製。融資維持率採 FinLab 的同一來源歷史序列，以融資股票市值除以上市櫃融資金額估算。缺少的日期留白。</p>`;
     inspect(rows.length-1);
   }
   function renderMargin(rows, metadata={}) {
@@ -152,7 +162,7 @@
     const version=historyVersion, due=MarketQuotes.expectedClosingDay();
     const latestMargin=payload?.data.at(-1);
     const updateMargin=force||!latestMargin||latestMargin.date<due||latestMargin.balance==null||latestMargin.financingRate==null||!MarginData.annualHigh(payload.data).complete;
-    const updateVix=force||!vixData.length||vixData.at(-1).date<due;
+    const updateVix=force||vixData.length<120||vixData.at(-1).date<due;
     if(!updateMargin&&!updateVix)return;
     button.disabled = true;
     try {

@@ -1,6 +1,6 @@
 const HISTORY = 'https://www.taifex.com.tw/indes/index.aspx/GetStockDayPrices';
 const MONTHLY = 'https://www.taifex.com.tw/file/taifex/Dailydownload/vix/log2data/';
-const MAX_DAYS = 90;
+const MAX_DAYS = 252;
 
 async function historyRows(start, end) {
   const format = date => date.replaceAll('-', '/');
@@ -48,7 +48,7 @@ module.exports = async function handler(req, res) {
   const taipei = new Date(Date.now() + 8 * 3600000);
   const today = taipei.toISOString().slice(0, 10);
   const start = new Date(taipei);
-  start.setUTCDate(start.getUTCDate() - 185);
+  start.setUTCDate(start.getUTCDate() - 400);
   const yesterday = new Date(taipei);
   yesterday.setUTCDate(yesterday.getUTCDate() - 1);
   const through = taipei.getUTCHours() * 60 + taipei.getUTCMinutes() >= 13 * 60 + 45
