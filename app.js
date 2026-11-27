@@ -137,6 +137,21 @@
       total: positions.length
     };
   }
+  function portfolioDailyPnl() {
+    const positions=state.holdings.filter(holding=>holding.symbol&&Number(holding.quantity)>0);
+    const moves=positions.map(holding=>({holding,move:MarketQuotes.dailyMove(holding.quote||state.quoteCache[holding.symbol])}));
+    const marketMoves=[state.quoteCache[state.settings?.benchmark||'0050'],state.quoteCache[MarketQuotes.INDEX]].map(quote=>MarketQuotes.dailyMove(quote));
+    const date=[...moves.map(({move})=>move),...marketMoves].filter(Boolean).map(move=>move.date).sort().at(-1)||null;
+    let amount=0,previousValue=0,count=0;
+    for(const {holding,move} of moves){
+      const quantity=Number(holding.quantity);
+      if(!move||move.date!==date||move.change==null||!Number.isFinite(quantity))continue;
+      amount+=move.change*quantity;
+      previousValue+=move.previousClose*quantity;
+      count++;
+    }
+    return {amount:count?amount:null,percent:previousValue>0?amount/previousValue*100:null,count,total:positions.length,date};
+  }
   function costAfterBuy(holding, quantity, price) {
     const before = Math.max(0, Number(holding.quantity || 0)), cost = costOf(holding);
     if (before === 0) return price;
@@ -223,6 +238,13 @@
     }else{
       $('totalPnlCoverage').textContent=`已計入 ${pnl.count} 檔持股，報酬率按持股總成本計算。`;
     }
+    const daily=portfolioDailyPnl();
+    $('totalDayPnl').classList.toggle('holding-profit',daily.amount>0);
+    $('totalDayPnl').classList.toggle('holding-loss',daily.amount<0);
+    $('totalDayPnlAmount').textContent=daily.amount==null?'—':`${daily.amount>0?'+':daily.amount<0?'-':''}${money(Math.abs(daily.amount))}`;
+    $('totalDayPnlPercent').textContent=daily.percent==null?'—':`${daily.percent>0?'+':''}${daily.percent.toFixed(2)}%`;
+    const dailyDate=daily.date?daily.date.slice(5).replace('-','/')+' 報價 · ':'';
+    $('totalDayPnlCoverage').textContent=daily.total===0?'新增持股後可查看當日損益。':daily.count===0?dailyDate+'等待報價與昨收參考價。':dailyDate+(daily.count<daily.total?`僅計入 ${daily.count} / ${daily.total} 檔。`:`已計入 ${daily.count} 檔持股。`);
     $('leverValue').textContent = money(p.lever); $('coreValue').textContent = money(p.core); $('cashValue').textContent = money(p.cash);
     $('holdingCount').textContent = `${state.holdings.length} 個標的`;
     const total = p.total || 1;
@@ -451,6 +473,10 @@
     return quotes[0];
   }
   function currentQuoteSymbols(extra='') { return MarketQuotes.symbols([...MarketQuotes.marketSymbols(state.settings.benchmark),...state.holdings.map(h=>h.symbol),extra]); }
+  function normalizedShioajiQuotes(body,symbols) {
+    const cached=[...Object.values(state.quoteCache),...state.holdings.map(holding=>holding.quote).filter(Boolean)];
+    return MarketQuotes.referenceBatch(body.quotes,symbols,body.references,cached);
+  }
   async function fetchShioajiQuotes(symbols, interactive=false, origin=quoteOrigin(), token=ngrokToken) {
     if (!interactive && origin === SHIOAJI_LOCAL) {
       const permission = await navigator.permissions?.query({ name:'loopback-network' }).catch(()=>null);
@@ -477,7 +503,7 @@
     if (body.state === 'login_error') throw new Error('本機服務登入永豐失敗');
     if (body.state !== 'connected' && body.state !== 'reconnecting') throw new Error('本機服務正在登入永豐，稍後再試');
     return {
-      quotes: MarketQuotes.localBatch(body.quotes, symbols),
+      quotes: normalizedShioajiQuotes(body, symbols),
       stream: body.stream === true,
       delayed: body.marketStale === true || body.state === 'reconnecting'
     };
@@ -660,7 +686,7 @@
       const delayed = body.marketStale === true || body.state === 'reconnecting';
       showQuoteStatus(delayed ? delayedQuoteStatus : '已連線 · 永豐即時推播', origin);
       let changed = false;
-      const quotes = MarketQuotes.localBatch(body.quotes, symbols);
+      const quotes = normalizedShioajiQuotes(body, symbols);
       for (const quote of quotes) {
         if (!marketSymbols.includes(quote.symbol)) continue;
         const previous = marketQuote(quote.symbol);

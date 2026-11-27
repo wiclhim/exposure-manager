@@ -25,6 +25,28 @@
     return (Array.isArray(quotes) ? quotes : []).filter(q =>
       wanted.has(q?.symbol) && Number.isFinite(q.price) && q.price > 0 && timestamp(q.quoteTime));
   }
+  function dailyMove(quote,now=Date.now()) {
+    if(!Number.isFinite(quote?.price)||quote.price<=0)return null;
+    const stamp=timestamp(quote.quoteTime||quote.lastUpdated);
+    if(!stamp||stamp>now)return null;
+    const date=new Date(stamp+8*3600000).toISOString().slice(0,10);
+    if(quote.date&&quote.date!==date)return null;
+    const previousClose=Number.isFinite(quote.previousClose)&&quote.previousClose>0?quote.previousClose:null;
+    return {date,previousClose,change:previousClose==null?null:quote.price-previousClose};
+  }
+  function referenceBatch(quotes,requested,references,cached=[]) {
+    const wanted=new Set(requested),result=new Map(localBatch(quotes,requested).map(quote=>[quote.symbol,quote]));
+    const refs=new Map((Array.isArray(references)?references:[]).filter(ref=>wanted.has(ref?.symbol)&&Number.isFinite(ref.previousClose)&&ref.previousClose>0).map(ref=>[ref.symbol,ref]));
+    const saved=new Map();
+    for(const quote of localBatch(cached,requested)){
+      if(!saved.has(quote.symbol)||timestamp(quote.quoteTime)>timestamp(saved.get(quote.symbol).quoteTime))saved.set(quote.symbol,quote);
+    }
+    for(const [symbol,ref] of refs){
+      const quote=result.get(symbol)||saved.get(symbol);
+      if(dailyMove(quote)?.date===ref.date)result.set(symbol,{...quote,previousClose:ref.previousClose});
+    }
+    return [...result.values()];
+  }
   function shioajiIndexBar(quote, now = Date.now()) {
     if (quote?.source !== '永豐 Shioaji') return null;
     const { price, high, low } = quote;
@@ -55,5 +77,5 @@
     const today = taipei.toISOString().slice(0, 10);
     return weekday >= 1 && weekday <= 5 && minutes >= 13 * 60 + 45 ? today : previousWeekday(today);
   }
-  return {INDEX,VIX,symbol,symbols,marketSymbols,privateOrigin,timestamp,localBatch,shioajiIndexBar,gainToHigh,previousWeekday,expectedClosingDay};
+  return {INDEX,VIX,symbol,symbols,marketSymbols,privateOrigin,timestamp,localBatch,dailyMove,referenceBatch,shioajiIndexBar,gainToHigh,previousWeekday,expectedClosingDay};
 });

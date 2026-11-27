@@ -9,6 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8').replac
     get: () => state,
     pnl: holdingPnl,
     summary: portfolioPnl,
+    daily: portfolioDailyPnl,
     apply: applyRebalancePlan,
     undo: undoRebalancePlan
   };
@@ -16,6 +17,7 @@ const source = fs.readFileSync(path.join(__dirname, '../app.js'), 'utf8').replac
 const context = {
   localStorage: { getItem: () => null, setItem() {} },
   window: {},
+  MarketQuotes: require('../market-quotes'),
   document: {}
 };
 vm.createContext(context);
@@ -94,4 +96,44 @@ assert.equal(api.summary().percent, null);
 api.set({ holdings: [], quoteCache: {} });
 assert.equal(api.summary().total, 0);
 
-console.log('PASS: optional costs, gain/loss, quote updates, average purchase cost, rebalance undo and partial portfolio totals');
+const dayQuote=(price,previousClose,date='2026-11-20')=>({price,previousClose,date,quoteTime:Date.parse(date+'T10:00:00+08:00'),source:'永豐 Shioaji'});
+api.set({
+  holdings:[
+    {symbol:'A',quantity:10,cost:null},
+    {symbol:'B',quantity:5},
+    {symbol:'C',quantity:5},
+    {symbol:'D',quantity:5,manualPrice:999},
+    {symbol:'E',quantity:0}
+  ],
+  quoteCache:{A:dayQuote(120,100),B:dayQuote(80,100),C:dayQuote(80,undefined)},
+  cash:999999,cashUsd:1000,usdTwd:32
+});
+let daily=api.daily();
+assert.equal(daily.amount,100);
+near(daily.percent,100/1500*100,'daily return uses prior holding value, independent of purchase cost and cash');
+assert.equal(daily.count,2);
+assert.equal(daily.total,4);
+assert.equal(daily.date,'2026-11-20');
+assert.equal(api.pnl(api.get().holdings[0]),null,'a missing purchase cost does not block daily P/L');
+api.get().quoteCache.A=dayQuote(130,100);
+assert.equal(api.daily().amount,200,'live quote changes drive daily P/L');
+api.get().quoteCache.C=dayQuote(80,undefined,'2026-11-23');
+assert.equal(api.daily().amount,null,'do not add a previous day return to a newer quote day');
+api.get().quoteCache.IX0001=dayQuote(22000,undefined,'2026-11-24');
+assert.equal(api.daily().date,'2026-11-24','the shared market quote establishes the current session');
+assert.equal(api.daily().count,0);
+api.get().quoteCache.A=dayQuote(110,100,'2026-11-24');
+assert.equal(api.daily().amount,100);
+assert.equal(api.daily().count,1,'older holding quotes are excluded instead of mixed into today');
+api.get().quoteCache.A=dayQuote(100,100,'2026-11-24');
+assert.equal(api.daily().amount,0);
+assert.equal(api.daily().percent,0,'a genuine flat day remains zero');
+for(const previousClose of [undefined,null,0,-1,NaN,Infinity,'100']){
+  api.get().quoteCache.A=dayQuote(120,previousClose,'2026-11-24');
+  assert.equal(api.daily().amount,null,'invalid references must not become a daily gain or loss');
+}
+api.set({holdings:[],quoteCache:{}});
+assert.equal(api.daily().amount,null);
+assert.equal(api.daily().total,0);
+
+console.log('PASS: optional costs, gain/loss, quote updates, average purchase cost, rebalance undo, daily holding return and mixed-session guards');

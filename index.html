@@ -65,10 +65,17 @@
             <div class="panel-top"><div><div class="section-label">TOTAL PORTFOLIO VALUE</div><h2>資產總值</h2></div><span class="subtle-pill" id="holdingCount">0 個標的</span></div>
             <div class="total-value" id="totalAssets">NT$0</div>
             <div class="total-cost"><span>持股總成本</span><strong id="totalHoldingCost">—</strong></div>
-            <div class="total-pnl" id="totalPnl">
-              <span>持股未實現損益</span>
-              <div class="total-pnl-values" aria-live="polite"><strong id="totalPnlAmount">—</strong><span id="totalPnlPercent">—</span></div>
-              <p id="totalPnlCoverage">填寫持股成本後可查看損益。</p>
+            <div class="total-pnl-grid">
+              <div class="total-pnl" id="totalPnl">
+                <span>持股未實現損益</span>
+                <div class="total-pnl-values" aria-live="polite"><strong id="totalPnlAmount">—</strong><span id="totalPnlPercent">—</span></div>
+                <p id="totalPnlCoverage">填寫持股成本後可查看損益。</p>
+              </div>
+              <div class="total-pnl" id="totalDayPnl">
+                <div class="total-pnl-heading"><span>當日損益</span><button class="info-button" aria-label="查看當日損益計算方式" data-tip="依目前持股股數乘以最新報價與昨收參考價之差估算；百分比以計入持股的昨收參考市值計算。不含當日已實現損益、股息、稅費、現金進出與匯率變動。持股有異動時，以目前股數估算。">i</button></div>
+                <div class="total-pnl-values" aria-live="polite"><strong id="totalDayPnlAmount">—</strong><span id="totalDayPnlPercent">—</span></div>
+                <p id="totalDayPnlCoverage">等待報價與昨收參考價。</p>
+              </div>
             </div>
             <div class="total-breakdown"><div><span class="break-dot lever"></span><span>槓桿部位</span><strong id="leverValue">NT$0</strong></div><div><span class="break-dot core"></span><span>原形部位</span><strong id="coreValue">NT$0</strong></div><div><span class="break-dot cash"></span><span>現金＋類現金</span><strong id="cashValue">NT$0</strong></div></div>
           </article>

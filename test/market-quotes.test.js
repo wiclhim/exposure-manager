@@ -12,6 +12,21 @@ const pair = [{ symbol:'0050', price:98.2, quoteTime:1794192297360 }, { symbol:'
 const invalid = [{ symbol:'0050', price:0, quoteTime:1794192297360 }, { symbol:'IX0001', price:42056.18 }, { symbol:'006208', price:184, quoteTime:1794192300000 }];
 assert.deepEqual(quotes.localBatch([...pair, ...invalid], quotes.marketSymbols('0050')), pair);
 assert.deepEqual(quotes.localBatch(null, []), []);
+const dayTime=Date.parse('2026-11-20T10:00:00+08:00');
+const dailyQuote={price:110,previousClose:100,date:'2026-11-20',quoteTime:dayTime};
+assert.deepEqual(quotes.dailyMove(dailyQuote,dayTime),{date:'2026-11-20',previousClose:100,change:10});
+assert.equal(quotes.dailyMove({...dailyQuote,price:90},dayTime).change,-10);
+assert.equal(quotes.dailyMove({...dailyQuote,price:100},dayTime).change,0);
+assert.equal(quotes.dailyMove({...dailyQuote,previousClose:null},dayTime).change,null);
+const cachedHolding={symbol:'0050',...dailyQuote,previousClose:undefined};
+const reference={symbol:'0050',date:'2026-11-20',previousClose:100};
+assert.equal(quotes.referenceBatch([],['0050'],[reference],[cachedHolding])[0].previousClose,100,'same-day contract data enriches an existing browser quote after restart');
+assert.equal(quotes.referenceBatch([],['0050'],[{...reference,date:'2026-11-23'}],[cachedHolding]).length,0,'never pair a new contract reference with an older trade');
+assert.equal(quotes.referenceBatch([],['0050'],[reference],[]).length,0,'a reference without a trade must not invent a current price');
+assert.equal(quotes.referenceBatch([{...cachedHolding,price:120}],['0050'],[reference],[cachedHolding])[0].price,120,'new broker prices retain priority over browser cache');
+for(const patch of [{price:0},{price:NaN},{date:'2026-11-19'},{quoteTime:dayTime+1},{quoteTime:null}]){
+  assert.equal(quotes.dailyMove({...dailyQuote,...patch},dayTime),null,'invalid or future quotes cannot drive daily P/L');
+}
 assert.equal(quotes.timestamp(1793683800000000), 1793683800000);
 const closeTime = Date.parse('2026-11-12T13:33:00+08:00');
 const indexQuote = { date:'2026-11-12', price:43091.87, high:44525.24, low:42943.50, quoteTime:closeTime, source:'永豐 Shioaji' };

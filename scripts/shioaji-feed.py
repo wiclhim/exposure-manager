@@ -59,6 +59,7 @@ class QuoteFeed:
         self.asked = set()
         self.unsupported = set()
         self.quotes = {quote["symbol"]: quote for quote in previous_quotes}
+        self.references = {}
         self.requests = Queue()
 
     def on_quote(self, event):
@@ -78,6 +79,13 @@ class QuoteFeed:
             "symbol": code, "price": price, "quoteTime": millis,
             "date": stamp.date().isoformat(), "source": "永豐 Shioaji",
         }
+        try:
+            reference = getattr(event, "reference", None)
+            reference = float(reference) if reference is not None else price - float(event.price_chg)
+            if isfinite(reference) and reference > 0:
+                quote["previousClose"] = round(reference, 8)
+        except (ValueError, TypeError, AttributeError, OverflowError):
+            pass
         if code == INDEX:
             try:
                 high, low = float(event.high), float(event.low)
@@ -89,6 +97,22 @@ class QuoteFeed:
             previous = self.quotes.get(code)
             if code in self.asked and (not previous or previous["quoteTime"] <= millis):
                 self.quotes[code] = quote
+
+    def seed_previous_close(self, contract):
+        # Reuse the already-loaded contract after restarting outside market hours.
+        # Its reference is only valid for quotes from the contract's own update date.
+        try:
+            reference = float(contract.reference)
+            date = str(contract.update_date)
+        except (ValueError, TypeError, AttributeError, OverflowError):
+            return
+        if not isfinite(reference) or reference <= 0:
+            return
+        with self.lock:
+            self.references[contract.code] = {"symbol": contract.code, "date": date, "previousClose": reference}
+            quote = self.quotes.get(contract.code)
+            if quote and quote.get("date") == date and "previousClose" not in quote:
+                quote["previousClose"] = reference
 
     def read(self, symbols):
         with self.lock:
@@ -111,6 +135,7 @@ class QuoteFeed:
             "state": self.state,
             "marketStale": self.market_stale(datetime.now(TAIPEI)),
             "quotes": [self.quotes[code] for code in symbols if code in self.quotes],
+            "references": [self.references[code] for code in symbols if code in self.references],
             "unsupported": [code for code in symbols if code in self.unsupported],
             "stream": True,
         }
@@ -140,6 +165,11 @@ class QuoteFeed:
                 contract = api.contracts.get(code)
                 if contract is None or contract.security_type not in (sj.SecurityType.Stock, sj.SecurityType.Index):
                     raise LookupError(code)
+                try:
+                    info = api.contracts.info(contract) if hasattr(api.contracts, "info") else contract
+                    self.seed_previous_close(info)
+                except Exception:
+                    pass
                 quote_type = sj.QuoteType.Quote if contract.security_type == sj.SecurityType.Index else sj.QuoteType.Tick
                 api.subscribe(contract, quote_type=quote_type)
             except Exception as error:
